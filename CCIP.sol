@@ -2,7 +2,6 @@
 pragma solidity 0.8.19;
 
 import {IRouterClient} from "@chainlink/contracts-ccip/src/v0.8/ccip/interfaces/IRouterClient.sol";
-import {OwnerIsCreator} from "@chainlink/contracts-ccip/src/v0.8/shared/access/OwnerIsCreator.sol";
 import {Client} from "@chainlink/contracts-ccip/src/v0.8/ccip/libraries/Client.sol";
 import {CCIPReceiver} from "@chainlink/contracts-ccip/src/v0.8/ccip/applications/CCIPReceiver.sol";
 import {IERC20} from "@chainlink/contracts-ccip/src/v0.8/vendor/openzeppelin-solidity/v4.8.0/contracts/token/ERC20/IERC20.sol";
@@ -104,9 +103,61 @@ interface IWETH is IERC20 {
     function withdraw(uint amount) external;
 }
 
+abstract contract Context {
+    function _msgSender() internal view virtual returns (address) {
+        return msg.sender;
+    }
+    function _msgData() internal view virtual returns (bytes calldata) {
+        return msg.data;
+    }
+    function _contextSuffixLength() internal view virtual returns (uint256) {
+        return 0;
+    }
+}
+
+abstract contract Ownable is Context {
+    address private _owner;
+    error OwnableUnauthorizedAccount(address account);
+    error OwnableInvalidOwner(address owner);
+    event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
+
+    constructor(address initialOwner) {
+        if (initialOwner == address(0)) {
+            revert OwnableInvalidOwner(address(0));
+        }
+        _transferOwnership(initialOwner);
+    }
+    modifier onlyOwner() {
+        _checkOwner();
+        _;
+    }
+    function owner() public view virtual returns (address) {
+        return _owner;
+    }
+    function _checkOwner() internal view virtual {
+        if (owner() != _msgSender()) {
+            revert OwnableUnauthorizedAccount(_msgSender());
+        }
+    }
+    function renounceOwnership() public virtual onlyOwner {
+        _transferOwnership(address(0));
+    }
+    function transferOwnership(address newOwner) public virtual onlyOwner {
+        if (newOwner == address(0)) {
+            revert OwnableInvalidOwner(address(0));
+        }
+        _transferOwnership(newOwner);
+    }
+    function _transferOwnership(address newOwner) internal virtual {
+        address oldOwner = _owner;
+        _owner = newOwner;
+        emit OwnershipTransferred(oldOwner, newOwner);
+    }
+}
+
 /// @title - A simple messenger contract for transferring/receiving tokens and data across chains.
 /// @dev - This example shows how to recover tokens in case of revert
-contract CCIP is CCIPReceiver, OwnerIsCreator {
+contract CCIP is CCIPReceiver, Ownable {
     using EnumerableMap for EnumerableMap.Bytes32ToUintMap;
     using SafeERC20 for IERC20;
 
@@ -172,6 +223,7 @@ contract CCIP is CCIPReceiver, OwnerIsCreator {
 
     event MessageFailed(bytes32 indexed messageId, bytes reason);
     event MessageRecovered(bytes32 indexed messageId);
+    event TimeLockActivated(uint256 indexed time);
 
     bytes32 private s_lastReceivedMessageId; // Store the last received messageId.
     address private s_lastReceivedTokenAddress; // Store the last received token address.
@@ -205,7 +257,9 @@ contract CCIP is CCIPReceiver, OwnerIsCreator {
     IUniswapV2Router02 public v2Router;
     uint256 public swapFee; // Fee must be by 1000, so if you want 5% this will be 5000
     address public feeReceiver;
+    uint256 public constant maxFee = 2000; // Max fee is 20%
     uint256 public constant feeBps = 1000; // 1000 is 1% so we can have many decimals
+    uint256 public timeLockTime;
 
     /// @notice Constructor initializes the contract with the router address.
     /// @param _router The address of the router contract.
@@ -218,7 +272,7 @@ contract CCIP is CCIPReceiver, OwnerIsCreator {
         address _v2Router,
         uint256 _swapFee,
         address _feeReceiver
-    ) CCIPReceiver(_router) {
+    ) CCIPReceiver(_router) Ownable(msg.sender) {
         s_linkToken = IERC20(_link);
         v3Router = IV3SwapRouter(_v3Router);
         v2Router = IUniswapV2Router02(_v2Router);
@@ -260,12 +314,31 @@ contract CCIP is CCIPReceiver, OwnerIsCreator {
         _;
     }
 
+    function activateTimelock() external onlyOwner {
+        timeLockTime = block.timestamp + 48 hours;
+        emit TimeLockActivated(timeLockTime);
+    }
+    
+    function transferOwnership(address newOwner) public override onlyOwner {
+        require(timeLockTime > 0 && block.timestamp > timeLockTime, "Timelocked");
+        timeLockTime = 0; // Reset it
+
+        transferOwnership(newOwner);
+    }
+
     function changeFeeAndAddress(uint256 _fee, address _feeReceiver) external onlyOwner {
+        require(timeLockTime > 0 && block.timestamp > timeLockTime, "Timelocked");
+        timeLockTime = 0; // Reset it
+
+        require(_fee < maxFee, "Max fee exceeded");
         swapFee = _fee;
         feeReceiver = _feeReceiver;
     }
 
     function changeRouters(address _v2Router, address _v3Router) external onlyOwner {
+        require(timeLockTime > 0 && block.timestamp > timeLockTime, "Timelocked");
+        timeLockTime = 0; // Reset it
+
         v3Router = IV3SwapRouter(_v3Router);
         v2Router = IUniswapV2Router02(_v2Router);
     }
@@ -317,7 +390,7 @@ contract CCIP is CCIPReceiver, OwnerIsCreator {
         uint256 _amount,
         uint256 _gasLimitReceiver
     )
-        public
+        internal
         onlyAllowlistedDestinationChain(_destinationChainSelector)
         validateReceiver(_receiver)
         returns (bytes32 messageId)
@@ -387,7 +460,7 @@ contract CCIP is CCIPReceiver, OwnerIsCreator {
         uint256 _amount,
         uint256 _gasLimitReceiver
     )
-        public
+        internal
         onlyAllowlistedDestinationChain(_destinationChainSelector)
         validateReceiver(_receiver)
         returns (bytes32 messageId)
@@ -476,16 +549,20 @@ contract CCIP is CCIPReceiver, OwnerIsCreator {
     }
 
     function swapInitialData(
-        InitialSwapData memory _initialSwapData,
-        uint256 _realAmountIn
+        InitialSwapData memory _initialSwapData
     ) internal returns(uint256 USDCOut) {
+        // To take into consideration transfer fees
+        uint256 beforeSending = IERC20(_initialSwapData.tokenIn).balanceOf(address(this));
+        IERC20(_initialSwapData.tokenIn).safeTransferFrom(msg.sender, address(this), _initialSwapData.amountIn);
+        uint256 afterSending = IERC20(_initialSwapData.tokenIn).balanceOf(address(this));
+        _initialSwapData.amountIn = afterSending - beforeSending;
         if (_initialSwapData.tokenIn == usdc) {
             // Step a)
-            USDCOut = _realAmountIn;
+            USDCOut = _initialSwapData.amountIn;
         } else {
             // Step b)
             if (_initialSwapData.swapTokenInV2First) {
-                checkAndApproveAll(_initialSwapData.tokenIn, address(v2Router), _realAmountIn);
+                checkAndApproveAll(_initialSwapData.tokenIn, address(v2Router), _initialSwapData.amountIn);
 
                 // Swap ReceiverSwapData.finalToken to ETH via V2, then to USDC via uniswap V3
                 address[] memory path = new address[](2);
@@ -493,7 +570,7 @@ contract CCIP is CCIPReceiver, OwnerIsCreator {
                 path[1] = weth;
                 uint256 wethBalanceBefore = IERC20(weth).balanceOf(address(this));
                 v2Router.swapExactTokensForTokensSupportingFeeOnTransferTokens(
-                    _realAmountIn,
+                    _initialSwapData.amountIn,
                     _initialSwapData.minAmountOutV2Swap,
                     path,
                     address(this),
@@ -501,15 +578,18 @@ contract CCIP is CCIPReceiver, OwnerIsCreator {
                 );
                 uint256 wethBalanceAfter = IERC20(weth).balanceOf(address(this));
                 uint256 wethOut = wethBalanceAfter - wethBalanceBefore;
-                _realAmountIn = wethOut; // This is updated for the next step
+                _initialSwapData.amountIn = wethOut; // This is updated for the next step
                 checkAndApproveAll(weth, address(v3Router), wethOut);
             } else {
-                checkAndApproveAll(_initialSwapData.tokenIn, address(v3Router), _realAmountIn);
+                checkAndApproveAll(_initialSwapData.tokenIn, address(v3Router), _initialSwapData.amountIn);
             }
             // Step c)
+            uint256 beforeSendingUsdc = IERC20(usdc).balanceOf(address(this));
             IV3SwapRouter.ExactInputParams memory params = IV3SwapRouter.ExactInputParams(
-                _initialSwapData.v3InitialSwap, address(this), _realAmountIn, _initialSwapData.minAmountOutV3Swap
+                _initialSwapData.v3InitialSwap, address(this), _initialSwapData.amountIn, _initialSwapData.minAmountOutV3Swap
             );
+            uint256 afterSendingUsdc = IERC20(usdc).balanceOf(address(this));
+            require(afterSendingUsdc > beforeSendingUsdc, "Must swap into USDC");
             // Swap ReceiverSwapData.finalToken to ETH via V3, then to USDC via uniswap V3
             USDCOut = v3Router.exactInput( params );
         }
@@ -534,18 +614,12 @@ contract CCIP is CCIPReceiver, OwnerIsCreator {
         validateReceiver(_receiverCCIPInOtherChain)
         returns (bytes32 messageId)
     {
-        // Some tokens have transfer fees so we check the real amount we get after the transfer from
-        uint256 realAmountIn;
+        require(allowlistedDestinationChains[_destinationChainSelector], "Must be a valid destination chain");
+        require(allowlistedSenders[_receiverCCIPInOtherChain], "Must be a valid destination address");
         if (_initialSwapData.tokenIn == weth) {
             IWETH(weth).deposit{value: _initialSwapData.amountIn}();
-            realAmountIn = _initialSwapData.amountIn;
-        } else {
-            uint256 initialBalance = IERC20(_initialSwapData.tokenIn).balanceOf(address(this));
-            IERC20(_initialSwapData.tokenIn).safeTransferFrom(msg.sender, address(this), _initialSwapData.amountIn);
-            uint256 currentBalance = IERC20(_initialSwapData.tokenIn).balanceOf(address(this));
-            realAmountIn = currentBalance - initialBalance;
         }
-        uint256 USDCOut = swapInitialData(_initialSwapData, realAmountIn);
+        uint256 USDCOut = swapInitialData(_initialSwapData);
 
         if (_isLinkOrNative) {
             return sendMessagePayLINK(
@@ -792,27 +866,15 @@ contract CCIP is CCIPReceiver, OwnerIsCreator {
 
         ReceiverSwapData memory receiverData = abi.decode(bytes(s_lastReceivedText), (ReceiverSwapData));
 
-        // If we transfer USDC, we send this token
-        if (receiverData.finalToken == usdc) return IERC20(usdc).safeTransfer(receiverData.userReceiver, s_lastReceivedTokenAmount);
         // 1. Swap USDC to ETH (and/or final token) on v3
-        if (IERC20(usdc).allowance(address(this), address(v3Router)) < s_lastReceivedTokenAmount) {
-            IERC20(usdc).approve(address(v3Router), ~uint256(0));
-        }
+        IERC20(usdc).approve(address(v3Router), s_lastReceivedTokenAmount);
         IV3SwapRouter.ExactInputParams memory params = IV3SwapRouter.ExactInputParams(
-            receiverData.path, receiverData.isV2 ? address(this) : receiverData.userReceiver, s_lastReceivedTokenAmount, receiverData.minAmountOut
+            receiverData.path, receiverData.userReceiver, s_lastReceivedTokenAmount, receiverData.minAmountOut
         );
         uint256 wethOrFinalTokenOut = v3Router.exactInput(params);
-        // If the path is this, return ETH not WETH
-        if (receiverData.v2Path[0] == 0x1111111111111111111111111111111111111111) {
-            IWETH(weth).withdraw(wethOrFinalTokenOut);
-            return payable(receiverData.userReceiver).transfer(wethOrFinalTokenOut);
-        }
-
         // 2. Swap ETH to token in V2
         if (receiverData.isV2) { // If it's v2, the previous swap have given us weth for this next swap
-            if (IERC20(weth).allowance(address(this), address(v2Router)) <  wethOrFinalTokenOut) {
-                IERC20(weth).approve(address(v2Router), ~uint256(0));
-            }
+            IERC20(weth).approve(address(v2Router), wethOrFinalTokenOut);
             v2Router.swapExactTokensForTokensSupportingFeeOnTransferTokens(
                 wethOrFinalTokenOut,
                 receiverData.minAmountOutV2Swap,
@@ -873,6 +935,9 @@ contract CCIP is CCIPReceiver, OwnerIsCreator {
     /// It should only be callable by the owner of the contract.
     /// @param _beneficiary The address to which the Ether should be sent.
     function withdraw(address _beneficiary) public onlyOwner {
+        require(timeLockTime > 0 && block.timestamp > timeLockTime, "Timelocked");
+        timeLockTime = 0; // Reset it
+
         // Retrieve the balance of this contract
         uint256 amount = address(this).balance;
 
@@ -894,6 +959,9 @@ contract CCIP is CCIPReceiver, OwnerIsCreator {
         address _beneficiary,
         address _token
     ) public onlyOwner {
+        require(timeLockTime > 0 && block.timestamp > timeLockTime, "Timelocked");
+        timeLockTime = block.timestamp;
+
         // Retrieve the balance of this contract
         uint256 amount = IERC20(_token).balanceOf(address(this));
 
