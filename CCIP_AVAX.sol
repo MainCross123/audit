@@ -495,6 +495,8 @@ contract CCIP_AVAX is CCIPReceiver, Ownable {
             USDCOut = _realAmountIn;
         } else {
             // Step b)
+            address outputToken = _initialSwapData.path.tokenPath[_initialSwapData.path.tokenPath.length - 1];
+            require(outputToken == usdc, 'Must swap to USDC');
             checkAndApproveAll(_initialSwapData.tokenIn, address(lbRouter), _realAmountIn);
             USDCOut = lbRouter.swapExactTokensForTokensSupportingFeeOnTransferTokens(
                 _realAmountIn,
@@ -517,7 +519,8 @@ contract CCIP_AVAX is CCIPReceiver, Ownable {
         uint256 _gasLimitReceiver, // How much gas the receiver will have to work with
         bool _isLinkOrNative,   // True = LINK, false = Native
         InitialSwapData memory _initialSwapData,
-        ReceiverSwapData memory _receiverSwapData
+        ReceiverSwapData memory _receiverSwapData,
+        uint256
     )
         external
         payable
@@ -528,8 +531,8 @@ contract CCIP_AVAX is CCIPReceiver, Ownable {
         // Some tokens have transfer fees so we check the real amount we get after the transfer from
         uint256 realAmountIn;
         if (_initialSwapData.tokenIn == wAVAX) {
-            IWNATIVE(wAVAX).deposit{value: _initialSwapData.amountIn}();
-            realAmountIn = _initialSwapData.amountIn;
+            IWNATIVE(wAVAX).deposit{value: msg.value - _initialSwapData.amountIn}();
+            realAmountIn = msg.value - _initialSwapData.amountIn;
         } else {
             uint256 initialBalance = IERC20(_initialSwapData.tokenIn).balanceOf(address(this));
             IERC20(_initialSwapData.tokenIn).safeTransferFrom(msg.sender, address(this), _initialSwapData.amountIn);

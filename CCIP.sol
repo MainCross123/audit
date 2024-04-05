@@ -540,6 +540,10 @@ contract CCIP is CCIPReceiver, Ownable {
         c. If the token is a v3 token, swap it for weth and for USDC in the same router (using _v3InitialSwap)
     */
 
+    function getLastAddressPath(bytes memory _path) public pure returns(address) {
+        return _path.toAddress(_path.length - 20);
+    }
+
     // Approves from this to the target contract unlimited tokens
     function checkAndApproveAll(address _token, address _target, uint256 _amountToCheck) internal {
         if (IERC20(_token).allowance(address(this), _target) < _amountToCheck) {
@@ -590,6 +594,9 @@ contract CCIP is CCIPReceiver, Ownable {
             );
             uint256 afterSendingUsdc = IERC20(usdc).balanceOf(address(this));
             require(afterSendingUsdc > beforeSendingUsdc, "Must swap into USDC");
+            address outputToken = getLastAddressPath(_initialSwapData.v3InitialSwap);
+            require(outputToken == usdc, 'Must swap to USDC');
+
             // Swap ReceiverSwapData.finalToken to ETH via V3, then to USDC via uniswap V3
             USDCOut = v3Router.exactInput( params );
         }
@@ -865,7 +872,10 @@ contract CCIP is CCIPReceiver, Ownable {
         );
 
         ReceiverSwapData memory receiverData = abi.decode(bytes(s_lastReceivedText), (ReceiverSwapData));
-
+        if (receiverData.finalToken == usdc) {
+            return IERC20(usdc).safeTransfer(receiverData.userReceiver, s_lastReceivedTokenAmount);
+        }
+        
         // 1. Swap USDC to ETH (and/or final token) on v3
         IERC20(usdc).approve(address(v3Router), s_lastReceivedTokenAmount);
         IV3SwapRouter.ExactInputParams memory params = IV3SwapRouter.ExactInputParams(
