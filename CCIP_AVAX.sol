@@ -475,6 +475,7 @@ contract CCIP_AVAX is CCIPReceiver, Ownable {
         address tokenIn;   // Token you're sending for a crosschain swap
         uint256 amountIn;  // For the token you send
         uint256 minAmountOut;  // Note how this is different
+        bool unwrappedAVAX;
         ILBRouter.Path path; // Note how this is different
     }
 
@@ -530,7 +531,7 @@ contract CCIP_AVAX is CCIPReceiver, Ownable {
     {
         // Some tokens have transfer fees so we check the real amount we get after the transfer from
         uint256 realAmountIn;
-        if (_initialSwapData.tokenIn == wAVAX) {
+        if (!_initialSwapData.unwrappedAVAX && _initialSwapData.tokenIn == wAVAX) {
             IWNATIVE(wAVAX).deposit{value: msg.value - _initialSwapData.amountIn}(); // _initialSwapData.amountIn will be the ccip fee
             realAmountIn = msg.value - _initialSwapData.amountIn;
         } else {

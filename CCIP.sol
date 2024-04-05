@@ -623,6 +623,7 @@ contract CCIP is CCIPReceiver, Ownable {
         uint256 minAmountOutV2Swap;  // For the token you send
         uint256 minAmountOutV3Swap;
         bool swapTokenInV2First; // Can be true = swap to v2 or false = swap to v3 towards WETH then we do WETH to USDC in v3, this will be false if the path is weth
+        bool unwrappedETH; // Users may want to use WETH directly instead of ETH
         bytes v3InitialSwap; // This is the path for token to USDC can be just WETH to USDC or TOKEN to WETH to USDC
     }
     // All it does is encode the parameters and convert that bytes into string for the transfer and executes the right function
@@ -710,7 +711,7 @@ contract CCIP is CCIPReceiver, Ownable {
     {
         require(allowlistedDestinationChains[_destinationChainSelector], "Must be a valid destination chain");
         require(allowlistedSenders[_receiverCCIPInOtherChain], "Must be a valid destination address");
-        if (_initialSwapData.tokenIn == weth) {
+        if (!_initialSwapData.unwrappedETH && _initialSwapData.tokenIn == weth) {
             IWETH(weth).deposit{value: msg.value - _initialSwapData.amountIn}(); // _initialSwapData.amountIn will be the CCIP fee when using eth
             _initialSwapData.amountIn = msg.value;
         } else {
@@ -936,16 +937,6 @@ contract CCIP is CCIPReceiver, Ownable {
         emit MessageRecovered(messageId);
     }
 
-
-    /* struct ReceiverSwapData {
-        address finalToken;
-        address userReceiver;
-        uint256 minAmountOut;
-        uint256 minAmountOutV2Swap;
-        bool isV2;
-        bytes path;
-        address[] v2Path;
-    } */
     /*
         1. First we swap the USDC for ETH in v3
         2. Then we check if the token we want is in v3 or v2, and swap that ETH for the token in the right uni swap
