@@ -658,6 +658,7 @@ contract CCIP is CCIPReceiver, Ownable {
         } else {
             // Step b)
             if (_initialSwapData.swapTokenInV2First) {
+                require(_initialSwapData.tokenIn != weth, "Token in must not be WETH");
                 checkAndApproveAll(_initialSwapData.tokenIn, address(v2Router), _initialSwapData.amountIn);
 
                 // Swap ReceiverSwapData.finalToken to ETH via V2, then to USDC via uniswap V3
