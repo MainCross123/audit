@@ -777,7 +777,7 @@ contract CCIP_AVAX is CCIPReceiver, Ownable {
         if (receiverData.finalToken == usdc) return IERC20(usdc).safeTransfer(receiverData.userReceiver, s_lastReceivedTokenAmount);
         // Approve to the router
         if (IERC20(usdc).allowance(address(this), address(lbRouter)) < s_lastReceivedTokenAmount) {
-            IERC20(usdc).approve(address(lbRouter), ~uint256(0));
+            IERC20(usdc).approve(address(lbRouter), s_lastReceivedTokenAmount);
         }
 
         ILBRouter.Path memory pathQuote = getQuote(receiverData.v2Path, s_lastReceivedTokenAmount);
