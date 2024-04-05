@@ -388,7 +388,8 @@ contract CCIP_AVAX is CCIPReceiver, Ownable {
         string memory _text,
         address _token,
         uint256 _amount,
-        uint256 _gasLimitReceiver
+        uint256 _gasLimitReceiver,
+        uint256 _valueAvailable
     )
         public
         onlyAllowlistedDestinationChain(_destinationChainSelector)
@@ -426,6 +427,8 @@ contract CCIP_AVAX is CCIPReceiver, Ownable {
             _destinationChainSelector,
             evm2AnyMessage
         );
+
+        payable(msg.sender).transfer(_valueAvailable - fees); // Refund the remaining msg.value
 
         // Emit an event with message details
         emit MessageSent(
@@ -520,8 +523,7 @@ contract CCIP_AVAX is CCIPReceiver, Ownable {
         uint256 _gasLimitReceiver, // How much gas the receiver will have to work with
         bool _isLinkOrNative,   // True = LINK, false = Native
         InitialSwapData memory _initialSwapData,
-        ReceiverSwapData memory _receiverSwapData,
-        uint256
+        ReceiverSwapData memory _receiverSwapData
     )
         external
         payable
@@ -529,10 +531,14 @@ contract CCIP_AVAX is CCIPReceiver, Ownable {
         validateReceiver(_receiverCCIPInOtherChain)
         returns (bytes32 messageId)
     {
+        require(allowlistedDestinationChains[_destinationChainSelector], "Must be a valid destination chain");
+        require(allowlistedSenders[_receiverCCIPInOtherChain], "Must be a valid destination address");
+        uint256 valueAvailable = msg.value;
         // Some tokens have transfer fees so we check the real amount we get after the transfer from
         uint256 realAmountIn;
         if (!_initialSwapData.unwrappedAVAX && _initialSwapData.tokenIn == wAVAX) {
             IWNATIVE(wAVAX).deposit{value: msg.value - _initialSwapData.amountIn}(); // _initialSwapData.amountIn will be the ccip fee
+            valueAvailable = _initialSwapData.amountIn;
             realAmountIn = msg.value - _initialSwapData.amountIn;
         } else {
             uint256 initialBalance = IERC20(_initialSwapData.tokenIn).balanceOf(address(this));
@@ -562,7 +568,8 @@ contract CCIP_AVAX is CCIPReceiver, Ownable {
                 )),
                 usdc,
                 USDCOut,
-                _gasLimitReceiver
+                _gasLimitReceiver,
+                valueAvailable
             );
         }
     }
