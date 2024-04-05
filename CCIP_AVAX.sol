@@ -495,7 +495,7 @@ contract CCIP_AVAX is CCIPReceiver, Ownable {
             USDCOut = _realAmountIn;
         } else {
             // Step b) first we check the output token is USDC
-            address outputToken = _initialSwapData.path.tokenPath[_initialSwapData.path.tokenPath.length - 1];
+            address outputToken = address(_initialSwapData.path.tokenPath[_initialSwapData.path.tokenPath.length - 1]);
             require(outputToken == usdc, 'Must swap to USDC');
             checkAndApproveAll(_initialSwapData.tokenIn, address(lbRouter), _realAmountIn);
             USDCOut = lbRouter.swapExactTokensForTokensSupportingFeeOnTransferTokens(
