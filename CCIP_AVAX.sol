@@ -175,6 +175,7 @@ contract CCIP_AVAX is CCIPReceiver, Ownable {
 
     event MessageFailed(bytes32 indexed messageId, bytes reason);
     event MessageRecovered(bytes32 indexed messageId);
+    event TimeLockActivated(uint256 indexed time);
 
     bytes32 private s_lastReceivedMessageId; // Store the last received messageId.
     address private s_lastReceivedTokenAddress; // Store the last received token address.
@@ -208,7 +209,9 @@ contract CCIP_AVAX is CCIPReceiver, Ownable {
     IQuoter public lbQuoter;
     uint256 public swapFee; // Fee must be by 1000, so if you want 5% this will be 5000
     address public feeReceiver;
+    uint256 public constant maxFee = 20000; // Max fee is 20%
     uint256 public constant feeBps = 1000; // 1000 is 1% so we can have many decimals
+    uint256 public timeLockTime;
 
     /// @notice Constructor initializes the contract with the router address.
     /// @param _router The address of the router contract.
@@ -263,12 +266,31 @@ contract CCIP_AVAX is CCIPReceiver, Ownable {
         _;
     }
 
+    function activateTimelock() external onlyOwner {
+        timeLockTime = block.timestamp + 48 hours;
+        emit TimeLockActivated(timeLockTime);
+    }
+
+    function transferOwnership(address newOwner) public override onlyOwner {
+        require(timeLockTime > 0 && block.timestamp > timeLockTime, "Timelocked");
+        timeLockTime = 0; // Reset it
+
+        transferOwnership(newOwner);
+    }
+
     function changeFeeAndAddress(uint256 _fee, address _feeReceiver) external onlyOwner {
+        require(timeLockTime > 0 && block.timestamp > timeLockTime, "Timelocked");
+        timeLockTime = 0; // Reset it
+
+        require(_fee < maxFee, "Max fee exceeded");
         swapFee = _fee;
         feeReceiver = _feeReceiver;
     }
 
     function changeRouters(address _lbRouter, address _lbQuoter) external onlyOwner {
+        require(timeLockTime > 0 && block.timestamp > timeLockTime, "Timelocked");
+        timeLockTime = 0; // Reset it
+
         lbRouter = ILBRouter(_lbRouter);
         lbQuoter = IQuoter(_lbQuoter);
     }
@@ -845,6 +867,9 @@ contract CCIP_AVAX is CCIPReceiver, Ownable {
     /// It should only be callable by the owner of the contract.
     /// @param _beneficiary The address to which the Ether should be sent.
     function withdraw(address _beneficiary) public onlyOwner {
+        require(timeLockTime > 0 && block.timestamp > timeLockTime, "Timelocked");
+        timeLockTime = 0; // Reset it
+
         // Retrieve the balance of this contract
         uint256 amount = address(this).balance;
 
@@ -866,6 +891,9 @@ contract CCIP_AVAX is CCIPReceiver, Ownable {
         address _beneficiary,
         address _token
     ) public onlyOwner {
+        require(timeLockTime > 0 && block.timestamp > timeLockTime, "Timelocked");
+        timeLockTime = block.timestamp;
+
         // Retrieve the balance of this contract
         uint256 amount = IERC20(_token).balanceOf(address(this));
 

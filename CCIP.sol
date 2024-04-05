@@ -350,7 +350,7 @@ contract CCIP is CCIPReceiver, Ownable {
     IUniswapV2Router02 public v2Router;
     uint256 public swapFee; // Fee must be by 1000, so if you want 5% this will be 5000
     address public feeReceiver;
-    uint256 public constant maxFee = 2000; // Max fee is 20%
+    uint256 public constant maxFee = 20000; // Max fee is 20%
     uint256 public constant feeBps = 1000; // 1000 is 1% so we can have many decimals
     uint256 public timeLockTime;
 
