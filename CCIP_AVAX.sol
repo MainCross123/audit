@@ -507,7 +507,7 @@ contract CCIP_AVAX is CCIPReceiver, Ownable {
                 _initialSwapData.minAmountOut, // Amount out min
                 _initialSwapData.path,
                 address(this),
-                99999999999999999999
+                block.timestamp
             );
         }
         // Send the fee
@@ -788,7 +788,7 @@ contract CCIP_AVAX is CCIPReceiver, Ownable {
                 receiverData.minAmountOut, // Amount out min
                 pathQuote,
                 receiverData.userReceiver,
-                99999999999999999999
+                block.timestamp
             );
         } else {
             lbRouter.swapExactTokensForNATIVESupportingFeeOnTransferTokens(
@@ -796,7 +796,7 @@ contract CCIP_AVAX is CCIPReceiver, Ownable {
                 receiverData.minAmountOut, // Amount out min
                 pathQuote,
                 payable(receiverData.userReceiver),
-                99999999999999999999
+                block.timestamp
             );
         }
     }

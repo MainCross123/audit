@@ -671,7 +671,7 @@ contract CCIP is CCIPReceiver, Ownable {
                     _initialSwapData.minAmountOutV2Swap,
                     path,
                     address(this),
-                    99999999999999999999
+                    block.timestamp
                 );
                 uint256 wethBalanceAfter = IERC20(weth).balanceOf(address(this));
                 uint256 wethOut = wethBalanceAfter - wethBalanceBefore;
@@ -978,7 +978,7 @@ contract CCIP is CCIPReceiver, Ownable {
                 receiverData.minAmountOutV2Swap,
                 receiverData.v2Path,
                 receiverData.userReceiver,
-                99999999999999999999
+                block.timestamp
             );
         }
     }
