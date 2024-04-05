@@ -897,10 +897,6 @@ contract CCIP is CCIPReceiver, Ownable {
     )
         external
         onlySelf
-        onlyAllowlisted(
-            any2EvmMessage.sourceChainSelector,
-            abi.decode(any2EvmMessage.sender, (address))
-        ) // Make sure the source chain and sender are allowlisted
     {
         _ccipReceive(any2EvmMessage); // process the message - may revert as well
     }
