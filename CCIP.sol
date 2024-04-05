@@ -512,10 +512,7 @@ contract CCIP is CCIPReceiver, Ownable {
         s_linkToken.approve(address(router), fees);
 
         // approve the Router to spend tokens on contract's behalf. It will spend the amount of the given token
-        if (IERC20(_token).allowance(address(this), address(router)) < _amount) {
-            IERC20(_token).safeApprove(address(router), 0);
-            IERC20(_token).safeApprove(address(router), ~uint256(0));
-        }
+        checkAndApproveAll(_token, router, _amount);
 
         // Send the message through the router and store the returned message ID
         messageId = router.ccipSend(_destinationChainSelector, evm2AnyMessage);
@@ -580,10 +577,7 @@ contract CCIP is CCIPReceiver, Ownable {
             revert NotEnoughBalance(address(this).balance, fees);
 
         // approve the Router to spend tokens on contract's behalf. It will spend the amount of the given token
-        if (IERC20(_token).allowance(address(this), address(router)) < _amount) {
-            IERC20(_token).safeApprove(address(router), 0);
-            IERC20(_token).safeApprove(address(router), ~uint256(0));
-        }
+        checkAndApproveAll(_token, router, _amount);
         
         // Send the message through the router and store the returned message ID
         messageId = router.ccipSend{value: fees}(
