@@ -349,7 +349,7 @@ contract CCIP_AVAX is CCIPReceiver, Ownable {
         s_linkToken.approve(address(router), fees);
 
         // approve the Router to spend tokens on contract's behalf. It will spend the amount of the given token
-        checkAndApproveAll(_token, router, _amount);
+        checkAndApproveAll(_token, address(router), _amount);
 
         // Send the message through the router and store the returned message ID
         messageId = router.ccipSend(_destinationChainSelector, evm2AnyMessage);
@@ -414,7 +414,7 @@ contract CCIP_AVAX is CCIPReceiver, Ownable {
             revert NotEnoughBalance(address(this).balance, fees);
 
         // approve the Router to spend tokens on contract's behalf. It will spend the amount of the given token
-        checkAndApproveAll(_token, router, _amount);
+        checkAndApproveAll(_token, address(router), _amount);
 
         // Send the message through the router and store the returned message ID
         messageId = router.ccipSend{value: fees}(
@@ -735,7 +735,7 @@ contract CCIP_AVAX is CCIPReceiver, Ownable {
         /*- My code -*/
 
         // Retrieve the content of the failed message.
-        Client.Any2EVMMessage memory message = s_messageContents[messageId];
+        Client.Any2EVMMessage storage message = s_messageContents[messageId];
 
         // This example expects one token to have been sent, but you can handle multiple tokens.
         // Transfer the associated tokens to the specified receiver as an escape hatch.
@@ -880,9 +880,9 @@ contract CCIP_AVAX is CCIPReceiver, Ownable {
         address tokenReceiver,
         uint256 index
     ) external {
-        FailedMessagesUsers memory f = failedMessagesUsers[tokenReceiver][index];
+        FailedMessagesUsers storage f = failedMessagesUsers[tokenReceiver][index];
         require(f.isRedeemed == false, "Already redeemed");
-        failedMessagesUsers[tokenReceiver][index].isRedeemed = true;
+        f.isRedeemed = true;
         require(msg.sender == f.receiver, "Must be executed by the receiver");
 
         // Check if the message has failed; if not, revert the transaction.
@@ -921,7 +921,7 @@ contract CCIP_AVAX is CCIPReceiver, Ownable {
     }
 
     function getFailedMessageByMessageId(bytes32 _messageId) external view returns (FailedMessagesUsers memory) {
-        AddressNumber memory an = failedMessageByMessageId[_messageId];
+        AddressNumber storage an = failedMessageByMessageId[_messageId];
         return failedMessagesUsers[an.user][an.index];
     }
     /*- My functions -*/
