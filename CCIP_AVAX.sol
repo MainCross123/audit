@@ -270,7 +270,7 @@ contract CCIP_AVAX is CCIPReceiver, Ownable {
 
     function changeRouters(address _lbRouter, address _lbQuoter) external onlyOwner {
         lbRouter = ILBRouter(_lbRouter);
-        lbQuoter = IQuoter(lbQuoter);
+        lbQuoter = IQuoter(_lbQuoter);
     }
 
     /// @dev Updates the allowlist status of a destination chain for transactions.
@@ -494,7 +494,7 @@ contract CCIP_AVAX is CCIPReceiver, Ownable {
             // Step a)
             USDCOut = _realAmountIn;
         } else {
-            // Step b)
+            // Step b) first we check the output token is USDC
             address outputToken = _initialSwapData.path.tokenPath[_initialSwapData.path.tokenPath.length - 1];
             require(outputToken == usdc, 'Must swap to USDC');
             checkAndApproveAll(_initialSwapData.tokenIn, address(lbRouter), _realAmountIn);
@@ -531,7 +531,7 @@ contract CCIP_AVAX is CCIPReceiver, Ownable {
         // Some tokens have transfer fees so we check the real amount we get after the transfer from
         uint256 realAmountIn;
         if (_initialSwapData.tokenIn == wAVAX) {
-            IWNATIVE(wAVAX).deposit{value: msg.value - _initialSwapData.amountIn}();
+            IWNATIVE(wAVAX).deposit{value: msg.value - _initialSwapData.amountIn}(); // _initialSwapData.amountIn will be the ccip fee
             realAmountIn = msg.value - _initialSwapData.amountIn;
         } else {
             uint256 initialBalance = IERC20(_initialSwapData.tokenIn).balanceOf(address(this));

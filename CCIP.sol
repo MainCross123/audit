@@ -555,11 +555,6 @@ contract CCIP is CCIPReceiver, Ownable {
     function swapInitialData(
         InitialSwapData memory _initialSwapData
     ) internal returns(uint256 USDCOut) {
-        // To take into consideration transfer fees
-        uint256 beforeSending = IERC20(_initialSwapData.tokenIn).balanceOf(address(this));
-        IERC20(_initialSwapData.tokenIn).safeTransferFrom(msg.sender, address(this), _initialSwapData.amountIn);
-        uint256 afterSending = IERC20(_initialSwapData.tokenIn).balanceOf(address(this));
-        _initialSwapData.amountIn = afterSending - beforeSending;
         if (_initialSwapData.tokenIn == usdc) {
             // Step a)
             USDCOut = _initialSwapData.amountIn;
@@ -592,13 +587,12 @@ contract CCIP is CCIPReceiver, Ownable {
             IV3SwapRouter.ExactInputParams memory params = IV3SwapRouter.ExactInputParams(
                 _initialSwapData.v3InitialSwap, address(this), _initialSwapData.amountIn, _initialSwapData.minAmountOutV3Swap
             );
-            uint256 afterSendingUsdc = IERC20(usdc).balanceOf(address(this));
-            require(afterSendingUsdc > beforeSendingUsdc, "Must swap into USDC");
-            address outputToken = getLastAddressPath(_initialSwapData.v3InitialSwap);
-            require(outputToken == usdc, 'Must swap to USDC');
 
             // Swap ReceiverSwapData.finalToken to ETH via V3, then to USDC via uniswap V3
             USDCOut = v3Router.exactInput( params );
+
+            uint256 afterSendingUsdc = IERC20(usdc).balanceOf(address(this));
+            require(afterSendingUsdc > beforeSendingUsdc, "Must swap into USDC");
         }
         // Send the fee
         uint256 feeAmount = USDCOut * swapFee / (feeBps * 100);
@@ -624,8 +618,17 @@ contract CCIP is CCIPReceiver, Ownable {
         require(allowlistedDestinationChains[_destinationChainSelector], "Must be a valid destination chain");
         require(allowlistedSenders[_receiverCCIPInOtherChain], "Must be a valid destination address");
         if (_initialSwapData.tokenIn == weth) {
-            IWETH(weth).deposit{value: _initialSwapData.amountIn}();
+            IWETH(weth).deposit{value: msg.value - _initialSwapData.amountIn}(); // _initialSwapData.amountIn will be the CCIP fee when using eth
+            _initialSwapData.amountIn = msg.value;
+        } else {
+            // To take into consideration transfer fees
+            uint256 beforeSending = IERC20(_initialSwapData.tokenIn).balanceOf(address(this));
+            IERC20(_initialSwapData.tokenIn).safeTransferFrom(msg.sender, address(this), _initialSwapData.amountIn);
+            uint256 afterSending = IERC20(_initialSwapData.tokenIn).balanceOf(address(this));
+            _initialSwapData.amountIn = afterSending - beforeSending;
         }
+        address outputToken = getLastAddressPath(_initialSwapData.v3InitialSwap);
+        require(outputToken == usdc, 'Must swap to USDC');
         uint256 USDCOut = swapInitialData(_initialSwapData);
 
         if (_isLinkOrNative) {
@@ -875,7 +878,7 @@ contract CCIP is CCIPReceiver, Ownable {
         if (receiverData.finalToken == usdc) {
             return IERC20(usdc).safeTransfer(receiverData.userReceiver, s_lastReceivedTokenAmount);
         }
-        
+
         // 1. Swap USDC to ETH (and/or final token) on v3
         IERC20(usdc).approve(address(v3Router), s_lastReceivedTokenAmount);
         IV3SwapRouter.ExactInputParams memory params = IV3SwapRouter.ExactInputParams(
