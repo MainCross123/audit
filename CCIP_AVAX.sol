@@ -531,8 +531,6 @@ contract CCIP_AVAX is CCIPReceiver, Ownable {
         validateReceiver(_receiverCCIPInOtherChain)
         returns (bytes32 messageId)
     {
-        require(allowlistedDestinationChains[_destinationChainSelector], "Must be a valid destination chain");
-        require(allowlistedSenders[_receiverCCIPInOtherChain], "Must be a valid destination address");
         uint256 valueAvailable = msg.value;
         // Some tokens have transfer fees so we check the real amount we get after the transfer from
         uint256 realAmountIn;
@@ -599,7 +597,6 @@ contract CCIP_AVAX is CCIPReceiver, Ownable {
         fees = router.getFee(_destinationChainSelector, evm2AnyMessage);
     }
     /*** My functions ***/
-
 
     /**
      * @notice Returns the details of the last CCIP received message.
@@ -760,7 +757,6 @@ contract CCIP_AVAX is CCIPReceiver, Ownable {
         // Emit an event indicating that the message has been recovered.
         emit MessageRecovered(messageId);
     }
-
 
     function _ccipReceive(
         Client.Any2EVMMessage memory any2EvmMessage
