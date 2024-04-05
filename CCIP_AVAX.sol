@@ -320,7 +320,7 @@ contract CCIP_AVAX is CCIPReceiver, Ownable {
         uint256 _amount,
         uint256 _gasLimitReceiver
     )
-        public
+        internal
         onlyAllowlistedDestinationChain(_destinationChainSelector)
         validateReceiver(_receiver)
         returns (bytes32 messageId)
@@ -391,7 +391,7 @@ contract CCIP_AVAX is CCIPReceiver, Ownable {
         uint256 _gasLimitReceiver,
         uint256 _valueAvailable
     )
-        public
+        internal
         onlyAllowlistedDestinationChain(_destinationChainSelector)
         validateReceiver(_receiver)
         returns (bytes32 messageId)
