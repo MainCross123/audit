@@ -332,9 +332,9 @@ contract CCIP is CCIPReceiver, Ownable {
     // Mapping to keep track of allowlisted senders.
     mapping(address => bool) public allowlistedSenders;
 
-    IERC20 private s_linkToken;
-    address public weth;
-    address public usdc;
+    IERC20 private immutable s_linkToken;
+    address public immutable weth;
+    address public immutable usdc;
 
     // The message contents of failed messages are stored here.
     mapping(bytes32 messageId => Client.Any2EVMMessage contents) public s_messageContents;
