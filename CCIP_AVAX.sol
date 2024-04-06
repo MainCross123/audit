@@ -467,9 +467,13 @@ contract CCIP_AVAX is CCIPReceiver, Ownable {
         // Use the quoter to find the best route for the swap
         address[] memory path = new address[](_path.length);
         IERC20[] memory pathToken = new IERC20[](_path.length);
-        for (uint256 i = 0; i < _path.length; i++) {
+        uint256 pathLength = _path.length;
+        for (uint256 i = 0; i < pathLength;) {
             path[i] = _path[i];
             pathToken[i] = IERC20(_path[i]);
+            unchecked {
+               ++i;
+            }
         }
         IQuoter.Quote memory quote = lbQuoter.findBestPathFromAmountIn(path, uint128(_amountIn));
         ILBRouter.Path memory myPath = ILBRouter.Path({
