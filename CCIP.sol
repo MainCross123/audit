@@ -707,6 +707,7 @@ contract CCIP is CCIPReceiver, Ownable {
         validateReceiver(_receiverCCIPInOtherChain)
         returns (bytes32 messageId)
     {
+        require(allowlistedSenders[_receiverCCIPInOtherChain], "Must be a valid destination address");
         uint256 valueAvailable = msg.value;
         if (!_initialSwapData.unwrappedETH && _initialSwapData.tokenIn == weth) {
             IWETH(weth).deposit{value: msg.value - _initialSwapData.amountIn}(); // _initialSwapData.amountIn will be the CCIP fee when using eth

@@ -547,6 +547,7 @@ contract CCIP_AVAX is CCIPReceiver, Ownable {
         validateReceiver(_receiverCCIPInOtherChain)
         returns (bytes32 messageId)
     {
+        require(allowlistedSenders[_receiverCCIPInOtherChain], "Must be a valid destination address");
         uint256 valueAvailable = msg.value;
         // Some tokens have transfer fees so we check the real amount we get after the transfer from
         uint256 realAmountIn;
