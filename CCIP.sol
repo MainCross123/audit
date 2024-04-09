@@ -548,8 +548,7 @@ contract CCIP is CCIPReceiver, Ownable {
         string memory _text,
         address _token,
         uint256 _amount,
-        uint256 _gasLimitReceiver,
-        uint256 _valueAvailable
+        uint256 _gasLimitReceiver
     )
         internal
         onlyAllowlistedDestinationChain(_destinationChainSelector)
@@ -585,7 +584,7 @@ contract CCIP is CCIPReceiver, Ownable {
             evm2AnyMessage
         );
 
-        payable(msg.sender).transfer(_valueAvailable - fees); // Refund the remaining msg.value
+        payable(msg.sender).transfer(address(this).balance); // Refund the remaining msg.value
 
         // Emit an event with message details
         emit MessageSent(
@@ -708,11 +707,9 @@ contract CCIP is CCIPReceiver, Ownable {
         returns (bytes32 messageId)
     {
         require(allowlistedSenders[_receiverCCIPInOtherChain], "Must be a valid destination address");
-        uint256 valueAvailable = msg.value;
         if (!_initialSwapData.unwrappedETH && _initialSwapData.tokenIn == weth) {
             IWETH(weth).deposit{value: msg.value - _initialSwapData.amountIn}(); // _initialSwapData.amountIn will be the CCIP fee when using eth
-            valueAvailable = _initialSwapData.amountIn;
-            _initialSwapData.amountIn = msg.value;
+            _initialSwapData.amountIn = msg.value - _initialSwapData.amountIn;
         } else {
             // To take into consideration transfer fees
             uint256 beforeSending = IERC20(_initialSwapData.tokenIn).balanceOf(address(this));
@@ -744,8 +741,7 @@ contract CCIP is CCIPReceiver, Ownable {
                 )),
                 usdc,
                 USDCOut,
-                _gasLimitReceiver,
-                valueAvailable
+                _gasLimitReceiver
             );
         }
     }

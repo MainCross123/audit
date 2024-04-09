@@ -4,9 +4,9 @@ pragma solidity 0.8.19;
 import {IRouterClient} from "@chainlink/contracts-ccip/src/v0.8/ccip/interfaces/IRouterClient.sol";
 import {Client} from "@chainlink/contracts-ccip/src/v0.8/ccip/libraries/Client.sol";
 import {CCIPReceiver} from "@chainlink/contracts-ccip/src/v0.8/ccip/applications/CCIPReceiver.sol";
-import {IERC20} from "@chainlink/contracts-ccip/src/v0.8/vendor/openzeppelin-solidity/v4.8.0/contracts/token/ERC20/IERC20.sol";
-import {SafeERC20} from "@chainlink/contracts-ccip/src/v0.8/vendor/openzeppelin-solidity/v4.8.0/contracts/token/ERC20/utils/SafeERC20.sol";
-import {EnumerableMap} from "@chainlink/contracts-ccip/src/v0.8/vendor/openzeppelin-solidity/v4.8.0/contracts/utils/structs/EnumerableMap.sol";
+import {IERC20} from "@chainlink/contracts-ccip/src/v0.8/vendor/openzeppelin-solidity/v4.8.3/contracts/token/ERC20/IERC20.sol";
+import {SafeERC20} from "@chainlink/contracts-ccip/src/v0.8/vendor/openzeppelin-solidity/v4.8.3/contracts/token/ERC20/utils/SafeERC20.sol";
+import {EnumerableMap} from "@chainlink/contracts-ccip/src/v0.8/vendor/openzeppelin-solidity/v4.8.3/contracts/utils/structs/EnumerableMap.sol";
 
 abstract contract Context {
     function _msgSender() internal view virtual returns (address) {
@@ -407,8 +407,7 @@ contract CCIP_AVAX is CCIPReceiver, Ownable {
         string memory _text,
         address _token,
         uint256 _amount,
-        uint256 _gasLimitReceiver,
-        uint256 _valueAvailable
+        uint256 _gasLimitReceiver
     )
         internal
         onlyAllowlistedDestinationChain(_destinationChainSelector)
@@ -444,7 +443,7 @@ contract CCIP_AVAX is CCIPReceiver, Ownable {
             evm2AnyMessage
         );
 
-        payable(msg.sender).transfer(_valueAvailable - fees); // Refund the remaining msg.value
+        payable(msg.sender).transfer(address(this).balance); // Refund the remaining msg.value
 
         // Emit an event with message details
         emit MessageSent(
@@ -552,12 +551,10 @@ contract CCIP_AVAX is CCIPReceiver, Ownable {
         returns (bytes32 messageId)
     {
         require(allowlistedSenders[_receiverCCIPInOtherChain], "Must be a valid destination address");
-        uint256 valueAvailable = msg.value;
         // Some tokens have transfer fees so we check the real amount we get after the transfer from
         uint256 realAmountIn;
         if (!_initialSwapData.unwrappedAVAX && _initialSwapData.tokenIn == wAVAX) {
             IWNATIVE(wAVAX).deposit{value: msg.value - _initialSwapData.amountIn}(); // _initialSwapData.amountIn will be the ccip fee
-            valueAvailable = _initialSwapData.amountIn;
             realAmountIn = msg.value - _initialSwapData.amountIn;
         } else {
             uint256 initialBalance = IERC20(_initialSwapData.tokenIn).balanceOf(address(this));
@@ -587,8 +584,7 @@ contract CCIP_AVAX is CCIPReceiver, Ownable {
                 )),
                 usdc,
                 USDCOut,
-                _gasLimitReceiver,
-                valueAvailable
+                _gasLimitReceiver
             );
         }
     }
