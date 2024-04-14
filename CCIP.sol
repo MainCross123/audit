@@ -610,6 +610,7 @@ contract CCIP is CCIPReceiver, Ownable {
         uint256 minAmountOut;
         uint256 minAmountOutV2Swap;
         bool isV2;
+        bool unwrapETH;
         bytes path;
         address[] v2Path;
     }
@@ -958,9 +959,12 @@ contract CCIP is CCIPReceiver, Ownable {
         // 1. Swap USDC to ETH (and/or final token) on v3
         IERC20(usdc).approve(address(v3Router), s_lastReceivedTokenAmount);
         IV3SwapRouter.ExactInputParams memory params = IV3SwapRouter.ExactInputParams(
-            receiverData.path, receiverData.userReceiver, s_lastReceivedTokenAmount, receiverData.minAmountOut
+            receiverData.path, 
+            receiverData.isV2 || receiverData.unwrapETH ? address(this) : receiverData.userReceiver,
+            s_lastReceivedTokenAmount, receiverData.minAmountOut
         );
         uint256 wethOrFinalTokenOut = v3Router.exactInput(params);
+
         // 2. Swap ETH to token in V2
         if (receiverData.isV2) { // If it's v2, the previous swap have given us weth for this next swap
             IERC20(weth).approve(address(v2Router), wethOrFinalTokenOut);
@@ -968,9 +972,15 @@ contract CCIP is CCIPReceiver, Ownable {
                 wethOrFinalTokenOut,
                 receiverData.minAmountOutV2Swap,
                 receiverData.v2Path,
-                receiverData.userReceiver,
+                receiverData.unwrapETH ? address(this) : receiverData.userReceiver,
                 block.timestamp
             );
+        }
+
+        if (receiverData.unwrapETH) { // Get ETH at the end
+            uint256 wethBalance = IERC20(weth).balanceOf(address(this));
+            IWETH(weth).withdraw(wethBalance);
+            payable(receiverData.userReceiver).transfer(address(this).balance);
         }
     }
 
