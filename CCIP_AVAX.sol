@@ -490,6 +490,7 @@ contract CCIP_AVAX is CCIPReceiver, Ownable {
         uint256 minAmountOut;
         uint256 minAmountOutV2Swap;
         bool isV2;
+        bool unwrapETH;
         bytes path;
         address[] v2Path;
     }
@@ -799,20 +800,20 @@ contract CCIP_AVAX is CCIPReceiver, Ownable {
         ILBRouter.Path memory pathQuote = getQuote(receiverData.v2Path, s_lastReceivedTokenAmount);
 
         // Make LBRouter swap
-        if (!receiverData.isV2) {
-            lbRouter.swapExactTokensForTokensSupportingFeeOnTransferTokens(
-                s_lastReceivedTokenAmount,
-                receiverData.minAmountOut, // Amount out min
-                pathQuote,
-                receiverData.userReceiver,
-                block.timestamp
-            );
-        } else {
+        if (receiverData.unwrapETH) {
             lbRouter.swapExactTokensForNATIVESupportingFeeOnTransferTokens(
                 s_lastReceivedTokenAmount,
                 receiverData.minAmountOut, // Amount out min
                 pathQuote,
                 payable(receiverData.userReceiver),
+                block.timestamp
+            );     
+        } else {
+            lbRouter.swapExactTokensForTokensSupportingFeeOnTransferTokens(
+                s_lastReceivedTokenAmount,
+                receiverData.minAmountOut, // Amount out min
+                pathQuote,
+                receiverData.userReceiver,
                 block.timestamp
             );
         }
