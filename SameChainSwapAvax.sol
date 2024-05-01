@@ -61,6 +61,7 @@ interface IQuoter {
 contract SameChainSwapAvax is Ownable {
   using SafeERC20 for IERC20;
 
+  mapping(address => bool) public feeTokens;
   uint256 public platformFee; // Fee must be by 1000, so if you want 5% this will be 5000
   address public feeReceiver;
   uint256 public constant feeBps = 1000; // 1000 is 1% so we can have many decimals
@@ -79,6 +80,11 @@ contract SameChainSwapAvax is Ownable {
   event FeeReceiverSet(
     address indexed _oldReceiver,
     address indexed _newReceiver
+  );
+  event Fee(
+    address indexed user, 
+    uint256 amount, 
+    address indexed token
   );
 
   constructor(
@@ -128,6 +134,7 @@ contract SameChainSwapAvax is Ownable {
   function swapOnce(
     address _tokenA,
     address _tokenB,
+    bool _unwrappETH,
     uint256 _amountIn,
     uint256 _minAmountOut,
     address[] memory _path,
@@ -139,24 +146,35 @@ contract SameChainSwapAvax is Ownable {
     } else {
       IERC20(_tokenA).safeTransferFrom(msg.sender, address(this), _amountIn);
     }
+
+    address feeToken = identifyFeeToken(_tokenA, _tokenB);
+
     uint256 amountIn = (msg.value > 0 ? msg.value : _amountIn);
-    uint256 feeAmount = (amountIn * platformFee) / (feeBps * 100);
-    uint256 amountAfterFee = amountIn - feeAmount;
-    IERC20(_tokenA).safeTransfer(feeReceiver, feeAmount); // Fee in tokenA
 
-    checkAndApproveAll(_tokenA, address(lbRouter), amountAfterFee);
+    uint256 amountToSwap = amountIn;
 
-    ILBRouter.Path memory pathQuote = getQuote(_path, amountAfterFee);
+    if (feeToken == _tokenA || feeToken == address(0)) {
+      amountToSwap = deductFees(amountIn, _tokenA);
+    }
+
+    checkAndApproveAll(_tokenA, address(lbRouter), amountToSwap);
+
+    ILBRouter.Path memory pathQuote = getQuote(_path, amountToSwap);
     uint256 output = lbRouter
       .swapExactTokensForTokensSupportingFeeOnTransferTokens(
-        amountAfterFee,
+        amountToSwap,
         _minAmountOut, // Amount out min
         pathQuote,
         address(this),
         block.timestamp * 5 minutes
-      );
+    );
 
-    if (_tokenB == wethToken) {
+    if (feeToken == _tokenB) {
+      output = deductFees(output, _tokenB);
+    }
+
+
+    if (_unwrappETH) {
       IWNATIVE(wethToken).withdraw(output);
       payable(msg.sender).transfer(output);
     } else {
@@ -165,6 +183,24 @@ contract SameChainSwapAvax is Ownable {
 
     emit SwapExecuted(_tokenA, _tokenB, _amountIn, output);
   }
+
+   function deductFees(uint _amount, address _token) internal returns(uint amountToSwap) {
+      uint feeAmount = _amount * platformFee / (feeBps * 100);
+      amountToSwap = _amount - feeAmount;
+      IERC20(_token).safeTransfer(feeReceiver, feeAmount);
+      emit Fee(msg.sender, feeAmount, _token);
+    }
+  
+
+  function identifyFeeToken(address _tokenA, address _tokenB) internal view returns (address) {
+    if (feeTokens[_tokenA]) {
+      return _tokenA;
+    } else if (feeTokens[_tokenB]) {
+      return _tokenB;
+    }
+    return address(0);
+  }
+
 
   function checkAndApproveAll(
     address _token,
@@ -185,6 +221,17 @@ contract SameChainSwapAvax is Ownable {
   function recoverStuckTokens(address _token) external onlyOwner {
     uint256 amount = IERC20(_token).balanceOf(address(this));
     IERC20(_token).safeTransfer(owner(), amount);
+  }
+
+
+  function addFeeToken(address _token) external onlyOwner {
+    require(_token != address(0), "Invalid token address");
+    feeTokens[_token] = true;
+  }
+
+  function removeFeeToken(address _token) external onlyOwner {
+    require(_token != address(0), "Invalid token address");
+    feeTokens[_token] = false;
   }
 
   receive() external payable {}

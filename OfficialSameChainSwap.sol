@@ -115,6 +115,7 @@ interface IWETH is IERC20 {
 contract OfficialSameChainSwap is Ownable, ReentrancyGuard {
   using SafeERC20 for IERC20;
 
+  mapping(address => bool) public feeTokens;
   uint256 public platformFee; // Fee must be by 1000, so if you want 5% this will be 5000
   address public feeReceiver;
   uint256 public constant feeBps = 1000; // 1000 is 1% so we can have many decimals
@@ -133,6 +134,11 @@ contract OfficialSameChainSwap is Ownable, ReentrancyGuard {
   event FeeReceiverSet(
     address indexed _oldReceiver,
     address indexed _newReceiver
+  );
+  event Fee(
+    address indexed user, 
+    uint256 amount, 
+    address indexed token
   );
 
   constructor(
@@ -177,23 +183,32 @@ contract OfficialSameChainSwap is Ownable, ReentrancyGuard {
       uint256 afterTransfer = IERC20(_tokenA).balanceOf(address(this));
       _amountIn = afterTransfer - beforeTransfer;
     }
+    address feeToken = identifyFeeToken(_tokenA, _tokenB);
+
     uint256 amountIn = (msg.value > 0 ? msg.value : _amountIn);
-    uint256 feeAmount = amountIn * platformFee / (feeBps * 100);
-    uint256 amountAfterFee = amountIn - feeAmount;
-    IERC20(_tokenA).safeTransfer(feeReceiver, feeAmount); // Fee in tokenA
+
+    uint256 amountToSwap = amountIn;
+    if (feeToken == _tokenA || feeToken == address(0)) {
+      amountToSwap = deductFees(amountIn, _tokenA);
+    }
 
     uint256 output;
     if (_buyOneTwoOrThree == 1) {
-      output = v2Swap(_pathV2, amountAfterFee, _minAmountOutV2);
+      output = v2Swap(_pathV2, amountToSwap, _minAmountOutV2);
     } else if (_buyOneTwoOrThree == 2) {
-      output = v3Swap(_tokenA, _pathV3, amountAfterFee, _minAmountOutV3);
+      output = v3Swap(_tokenA, _pathV3, amountToSwap, _minAmountOutV3);
     } else if (_buyOneTwoOrThree == 3) {
-      output = v2Swap(_pathV2, amountAfterFee, _minAmountOutV2);
+      output = v2Swap(_pathV2, amountToSwap, _minAmountOutV2);
       output = v3Swap(_pathV2[_pathV2.length - 1], _pathV3, output, _minAmountOutV3);
     } else if (_buyOneTwoOrThree == 4) {
-      output = v3Swap(_tokenA, _pathV3, amountAfterFee, _minAmountOutV3);
+      output = v3Swap(_tokenA, _pathV3, amountToSwap, _minAmountOutV3);
       output = v2Swap(_pathV2, output, _minAmountOutV2);
     }
+
+    if (feeToken == _tokenB) {
+      output = deductFees(output, _tokenB);
+    }
+
 
     if (_unwrappETH) {
       IWETH(wethToken).withdraw(output);
@@ -203,6 +218,23 @@ contract OfficialSameChainSwap is Ownable, ReentrancyGuard {
     }
 
     emit SwapExecuted(_tokenA, _tokenB, _amountIn, output);
+  }
+
+  function deductFees(uint _amount, address _token) internal returns(uint amountToSwap) {
+    uint feeAmount = _amount * platformFee / (feeBps * 100);
+    amountToSwap = _amount - feeAmount;
+    IERC20(_token).safeTransfer(feeReceiver, feeAmount);
+    emit Fee(msg.sender, feeAmount, _token);
+  }
+  
+
+  function identifyFeeToken(address _tokenA, address _tokenB) internal view returns (address) {
+    if (feeTokens[_tokenA]) {
+      return _tokenA;
+    } else if (feeTokens[_tokenB]) {
+      return _tokenB;
+    }
+    return address(0);
   }
 
   function checkAndApproveAll(address _token, address _target, uint256 _amountToCheck) internal {
@@ -216,7 +248,7 @@ contract OfficialSameChainSwap is Ownable, ReentrancyGuard {
     address[] memory _path,
     uint256 _amountIn,
     uint256 _minAmountOut // Slippage in base of 1000 meaning 10 is 1% and 1 is 0.1% where 1000 is 1
-  ) public returns (uint256) {
+  ) internal returns (uint256) {
     address tokenOut = _path[_path.length - 1];
     checkAndApproveAll(_path[0], address(v2Router), _amountIn);
     uint256 initial = IERC20(tokenOut).balanceOf(address(this));
@@ -236,7 +268,7 @@ contract OfficialSameChainSwap is Ownable, ReentrancyGuard {
     bytes memory _path,
     uint256 _amountIn,
     uint256 _minAmountOut
-  ) public returns (uint256 amountOutput) {
+  ) internal returns (uint256 amountOutput) {
     checkAndApproveAll(_tokenIn, address(v3Router), _amountIn);
     IV3SwapRouter.ExactInputParams memory params = IV3SwapRouter.ExactInputParams(
       _path, address(this), _amountIn, _minAmountOut
@@ -252,6 +284,17 @@ contract OfficialSameChainSwap is Ownable, ReentrancyGuard {
     uint256 amount = IERC20(_token).balanceOf(address(this));
     IERC20(_token).safeTransfer(owner(), amount);
   }
+
+  function addFeeToken(address _token) external onlyOwner {
+    require(_token != address(0), "Invalid token address");
+    feeTokens[_token] = true;
+  }
+
+  function removeFeeToken(address _token) external onlyOwner {
+    require(_token != address(0), "Invalid token address");
+    feeTokens[_token] = false;
+  }
+
 
   receive() external payable {}
 
