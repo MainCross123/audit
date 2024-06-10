@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity =0.8.20;
 
-import "@openzeppelin/contracts/access/Ownable.sol";
+import "@openzeppelin/contracts/access/Ownable2Step.sol";
 import "@uniswap/v3-core/contracts/interfaces/IUniswapV3Factory.sol";
 import "@uniswap/v3-core/contracts/interfaces/IUniswapV3Pool.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
@@ -58,7 +58,7 @@ interface IQuoter {
   ) external view returns (Quote memory quote);
 }
 
-contract SameChainSwapAvax is Ownable {
+contract SameChainSwapAvax is Ownable2Step {
   using SafeERC20 for IERC20;
 
   mapping(address => bool) public feeTokens;
@@ -69,7 +69,7 @@ contract SameChainSwapAvax is Ownable {
   ILBRouter public lbRouter;
   IQuoter public lbQuoter;
   address public wethToken;
-
+  error FailedCall(); // Used when transfer function is failed.
   //////////================= Events ====================================================
   event SwapExecuted(
     address indexed tokenIn,
@@ -99,13 +99,14 @@ contract SameChainSwapAvax is Ownable {
     lbQuoter = IQuoter(_lbQuoter);
     wethToken = address(lbRouter.getWNATIVE());
   }
-
- function changeFeeData(uint256 _fee, address _feeReceiver) external onlyOwner {
+    uint256 public constant MAX_PLATFORM_FEE = 2000; // 20% in basis points
+  function changeFeeData(uint256 _fee, address _feeReceiver) external onlyOwner {
+    require(_fee <= MAX_PLATFORM_FEE, "Platform fee exceeds the maximum limit");
     address oldReceiver = feeReceiver;
     platformFee = _fee;
     feeReceiver = _feeReceiver;
     emit FeeReceiverSet(oldReceiver, _feeReceiver);
-  }
+}
 
   // To get the estimated path for making a swap
   function getQuote(
@@ -142,9 +143,14 @@ contract SameChainSwapAvax is Ownable {
   ) public payable {
     // ETH -> Token
     if (!isWethIn && _tokenA == wethToken) {
+      require(msg.value > 0, "invalid msg.value");
       IWNATIVE(wethToken).deposit{value: msg.value}();
     } else {
+      require(msg.value == 0, "invalid msg.value");
+      uint256 beforeTransfer = IERC20(_tokenA).balanceOf(address(this));
       IERC20(_tokenA).safeTransferFrom(msg.sender, address(this), _amountIn);
+      uint256 afterTransfer = IERC20(_tokenA).balanceOf(address(this));
+      _amountIn = afterTransfer - beforeTransfer;
     }
 
     address feeToken = identifyFeeToken(_tokenA, _tokenB);
@@ -166,7 +172,7 @@ contract SameChainSwapAvax is Ownable {
         _minAmountOut, // Amount out min
         pathQuote,
         address(this),
-        block.timestamp * 5 minutes
+        block.timestamp + 1 hours
     );
 
     if (feeToken == _tokenB) {
@@ -174,9 +180,13 @@ contract SameChainSwapAvax is Ownable {
     }
 
 
-    if (_unwrappETH) {
+    if (_unwrappETH && _tokenB == wethToken) {
       IWNATIVE(wethToken).withdraw(output);
-      payable(msg.sender).transfer(output);
+      // payable(msg.sender).transfer(output);
+      (bool success, ) = msg.sender.call{value: output}("");
+      if(!success) {
+        revert FailedCall();
+      }
     } else {
       IERC20(_tokenB).safeTransfer(msg.sender, output);
     }
@@ -215,7 +225,11 @@ contract SameChainSwapAvax is Ownable {
 
 
   function recoverStuckETH(address payable _beneficiary) public onlyOwner {
-    _beneficiary.transfer(address(this).balance);
+    // _beneficiary.transfer(address(this).balance);
+    (bool success, ) = _beneficiary.call{value: address(this).balance}("");
+    if(!success) {
+      revert FailedCall();
+    }
   }
 
   function recoverStuckTokens(address _token) external onlyOwner {

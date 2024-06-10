@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
-pragma solidity 0.8.19;
+pragma solidity ^0.8.20;
 
+import "@openzeppelin/contracts/access/Ownable2Step.sol";
 import {IRouterClient} from "@chainlink/contracts-ccip/src/v0.8/ccip/interfaces/IRouterClient.sol";
 import {Client} from "@chainlink/contracts-ccip/src/v0.8/ccip/libraries/Client.sol";
 import {CCIPReceiver} from "@chainlink/contracts-ccip/src/v0.8/ccip/applications/CCIPReceiver.sol";
@@ -17,46 +18,6 @@ abstract contract Context {
     }
     function _contextSuffixLength() internal view virtual returns (uint256) {
         return 0;
-    }
-}
-
-abstract contract Ownable is Context {
-    address private _owner;
-    error OwnableUnauthorizedAccount(address account);
-    error OwnableInvalidOwner(address owner);
-    event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
-
-    constructor(address initialOwner) {
-        if (initialOwner == address(0)) {
-            revert OwnableInvalidOwner(address(0));
-        }
-        _transferOwnership(initialOwner);
-    }
-    modifier onlyOwner() {
-        _checkOwner();
-        _;
-    }
-    function owner() public view virtual returns (address) {
-        return _owner;
-    }
-    function _checkOwner() internal view virtual {
-        if (owner() != _msgSender()) {
-            revert OwnableUnauthorizedAccount(_msgSender());
-        }
-    }
-    function renounceOwnership() public virtual onlyOwner {
-        _transferOwnership(address(0));
-    }
-    function transferOwnership(address newOwner) public virtual onlyOwner {
-        if (newOwner == address(0)) {
-            revert OwnableInvalidOwner(address(0));
-        }
-        _transferOwnership(newOwner);
-    }
-    function _transferOwnership(address newOwner) internal virtual {
-        address oldOwner = _owner;
-        _owner = newOwner;
-        emit OwnershipTransferred(oldOwner, newOwner);
     }
 }
 
@@ -109,7 +70,7 @@ interface IQuoter {
 
 /// @title - A simple messenger contract for transferring/receiving tokens and data across chains.
 /// @dev - This example shows how to recover tokens in case of revert
-contract CCIP_AVAX is CCIPReceiver, Ownable {
+contract CCIP_AVAX is CCIPReceiver, Ownable2Step {
     using EnumerableMap for EnumerableMap.Bytes32ToUintMap;
     using SafeERC20 for IERC20;
 
@@ -122,8 +83,9 @@ contract CCIP_AVAX is CCIPReceiver, Ownable {
     error SenderNotAllowed(address sender); // Used when the sender has not been allowlisted by the contract owner.
     error InvalidReceiverAddress(); // Used when the receiver address is 0.
     error OnlySelf(); // Used when a function is called outside of the contract itself.
-    error ErrorCase(); // Used when simulating a revert during message processing.
     error MessageNotFailed(bytes32 messageId);
+    error FailedCall(); // Used when transfer function is failed.
+    error InvalidMessage();
 
     // Example error code, could have many different error codes.
     enum ErrorCode {
@@ -223,8 +185,9 @@ contract CCIP_AVAX is CCIPReceiver, Ownable {
         address _lbRouter,
         address _lbQuoter,
         uint256 _swapFee,
-        address _feeReceiver
-    ) CCIPReceiver(_router) Ownable(msg.sender) {
+        address _feeReceiver,
+        address _owner
+    ) CCIPReceiver(_router) Ownable(_owner) {
         s_linkToken = IERC20(_link);
         lbRouter = ILBRouter(_lbRouter);
         lbQuoter = IQuoter(_lbQuoter);
@@ -275,7 +238,10 @@ contract CCIP_AVAX is CCIPReceiver, Ownable {
         require(timeLockTime > 0 && block.timestamp > timeLockTime, "Timelocked");
         timeLockTime = 0; // Reset it
 
-        transferOwnership(newOwner);
+        if (newOwner == address(0)) {
+            revert OwnableInvalidOwner(address(0));
+        }
+        _transferOwnership(newOwner);
     }
 
     function changeFeeAndAddress(uint256 _fee, address _feeReceiver) external onlyOwner {
@@ -364,6 +330,10 @@ contract CCIP_AVAX is CCIPReceiver, Ownable {
         // Get the fee required to send the CCIP message
         uint256 fees = router.getFee(_destinationChainSelector, evm2AnyMessage);
 
+        // Revert invalid message if the fee is zero
+         if (fees == 0) 
+            revert InvalidMessage();
+
         if (fees > s_linkToken.balanceOf(address(this)))
             revert NotEnoughBalance(s_linkToken.balanceOf(address(this)), fees);
 
@@ -375,6 +345,9 @@ contract CCIP_AVAX is CCIPReceiver, Ownable {
 
         // Send the message through the router and store the returned message ID
         messageId = router.ccipSend(_destinationChainSelector, evm2AnyMessage);
+
+        // Refund any excess LINK tokens to the user
+        refundExcessLink(fees);
 
         // Emit an event with message details
         emit MessageSent(
@@ -390,6 +363,18 @@ contract CCIP_AVAX is CCIPReceiver, Ownable {
 
         // Return the message ID
         return messageId;
+    }
+
+    /// @notice Refunds any excess LINK tokens to the sender.
+    /// @dev This function calculates the difference between the remaining LINK balance and the fees, then transfers any excess back to the sender.
+    /// @param fees The amount of LINK tokens used for the transaction fees.
+    function refundExcessLink(uint256 fees) internal {
+        uint256 remainingLinkBalance = s_linkToken.balanceOf(address(this));
+        uint256 excessLink = remainingLinkBalance - fees;
+
+        if (excessLink > 0) {
+            s_linkToken.transfer(msg.sender, excessLink);
+        }
     }
 
     /// @notice Sends data and transfer tokens to receiver on the destination chain.
@@ -431,6 +416,10 @@ contract CCIP_AVAX is CCIPReceiver, Ownable {
         // Get the fee required to send the CCIP message
         uint256 fees = router.getFee(_destinationChainSelector, evm2AnyMessage);
 
+        // Revert invalid message if the fee is zero
+         if (fees == 0) 
+            revert InvalidMessage();
+
         if (fees > address(this).balance)
             revert NotEnoughBalance(address(this).balance, fees);
 
@@ -443,8 +432,11 @@ contract CCIP_AVAX is CCIPReceiver, Ownable {
             evm2AnyMessage
         );
 
-        payable(msg.sender).transfer(address(this).balance); // Refund the remaining msg.value
-
+        // payable(msg.sender).transfer(address(this).balance); // Refund the remaining msg.value
+        (bool success, ) = msg.sender.call{value: address(this).balance}("");
+        if(!success) {
+            revert FailedCall();
+        }
         // Emit an event with message details
         emit MessageSent(
             messageId,
@@ -527,7 +519,7 @@ contract CCIP_AVAX is CCIPReceiver, Ownable {
                 _initialSwapData.minAmountOut, // Amount out min
                 _initialSwapData.path,
                 address(this),
-                block.timestamp
+                block.timestamp + 1 hours
             );
         }
         // Send the fee
@@ -542,13 +534,11 @@ contract CCIP_AVAX is CCIPReceiver, Ownable {
         address _receiverCCIPInOtherChain,
         uint256 _gasLimitReceiver, // How much gas the receiver will have to work with
         bool _isLinkOrNative,   // True = LINK, false = Native
-        InitialSwapData memory _initialSwapData,
-        ReceiverSwapData memory _receiverSwapData
+        InitialSwapData calldata _initialSwapData,
+        ReceiverSwapData calldata _receiverSwapData
     )
         external
         payable
-        onlyAllowlistedDestinationChain(_destinationChainSelector)
-        validateReceiver(_receiverCCIPInOtherChain)
         returns (bytes32 messageId)
     {
         require(allowlistedSenders[_receiverCCIPInOtherChain], "Must be a valid destination address");
@@ -753,8 +743,7 @@ contract CCIP_AVAX is CCIPReceiver, Ownable {
         s_failedMessages.set(messageId, uint256(ErrorCode.RESOLVED));
 
         /*- My code -*/
-        require(failedMessagesUsers[tokenReceiver][index].isRedeemed == false,
-            "Already redeemed");
+        require(!failedMessagesUsers[tokenReceiver][index].isRedeemed, "Already redeemed");
         failedMessagesUsers[tokenReceiver][index].isRedeemed = true;
         /*- My code -*/
 
@@ -806,7 +795,7 @@ contract CCIP_AVAX is CCIPReceiver, Ownable {
                 receiverData.minAmountOut, // Amount out min
                 pathQuote,
                 payable(receiverData.userReceiver),
-                block.timestamp
+                block.timestamp + 1 hours
             );     
         } else {
             lbRouter.swapExactTokensForTokensSupportingFeeOnTransferTokens(
@@ -814,7 +803,7 @@ contract CCIP_AVAX is CCIPReceiver, Ownable {
                 receiverData.minAmountOut, // Amount out min
                 pathQuote,
                 receiverData.userReceiver,
-                block.timestamp
+                block.timestamp + 1 hours
             );
         }
     }
@@ -894,7 +883,7 @@ contract CCIP_AVAX is CCIPReceiver, Ownable {
         address _token
     ) public onlyOwner {
         require(timeLockTime > 0 && block.timestamp > timeLockTime, "Timelocked");
-        timeLockTime = block.timestamp;
+        timeLockTime = 0; // Reset the timelock time to ensure the mechanism is valid for future withdrawals
 
         // Retrieve the balance of this contract
         uint256 amount = IERC20(_token).balanceOf(address(this));
@@ -911,7 +900,7 @@ contract CCIP_AVAX is CCIPReceiver, Ownable {
         uint256 index
     ) external {
         FailedMessagesUsers storage f = failedMessagesUsers[tokenReceiver][index];
-        require(f.isRedeemed == false, "Already redeemed");
+        require(!f.isRedeemed, "Already redeemed");
         f.isRedeemed = true;
         require(msg.sender == f.receiver, "Must be executed by the receiver");
 

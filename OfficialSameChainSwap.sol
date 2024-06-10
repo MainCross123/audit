@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity =0.8.20;
 
-import "@openzeppelin/contracts/access/Ownable.sol";
+import "@openzeppelin/contracts/access/Ownable2Step.sol";
 import "@uniswap/v3-core/contracts/interfaces/IUniswapV3Factory.sol";
 import "@uniswap/v3-core/contracts/interfaces/IUniswapV3Pool.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
@@ -112,7 +112,7 @@ interface IWETH is IERC20 {
     function withdraw(uint amount) external;
 }
 
-contract OfficialSameChainSwap is Ownable, ReentrancyGuard {
+contract OfficialSameChainSwap is Ownable2Step, ReentrancyGuard {
   using SafeERC20 for IERC20;
 
   mapping(address => bool) public feeTokens;
@@ -123,7 +123,7 @@ contract OfficialSameChainSwap is Ownable, ReentrancyGuard {
   IUniswapV2Router02 public v2Router;
   IV3SwapRouter public v3Router;
   address public wethToken;
-
+  error FailedCall(); // Used when transfer function is failed.
   //////////================= Events ====================================================
   event SwapExecuted(
     address indexed tokenIn,
@@ -155,7 +155,9 @@ contract OfficialSameChainSwap is Ownable, ReentrancyGuard {
     wethToken = _weth;
   }
 
+  uint256 public constant MAX_PLATFORM_FEE = 2000; // 20% in basis points
   function changeFeeData(uint256 _fee, address _feeReceiver) external onlyOwner {
+    require(_fee <= MAX_PLATFORM_FEE, "Platform fee exceeds the maximum limit");
     address oldReceiver = feeReceiver;
     platformFee = _fee;
     feeReceiver = _feeReceiver;
@@ -176,8 +178,10 @@ contract OfficialSameChainSwap is Ownable, ReentrancyGuard {
   ) public payable nonReentrant {
     // ETH -> Token
     if (!isWethIn && _tokenA == wethToken) {
+      require(msg.value > 0, "invalid msg.value");
       IWETH(wethToken).deposit{value: msg.value}();
     } else {
+      require(msg.value == 0, "invalid msg.value");
       uint256 beforeTransfer = IERC20(_tokenA).balanceOf(address(this));
       IERC20(_tokenA).safeTransferFrom(msg.sender, address(this), _amountIn);
       uint256 afterTransfer = IERC20(_tokenA).balanceOf(address(this));
@@ -210,9 +214,13 @@ contract OfficialSameChainSwap is Ownable, ReentrancyGuard {
     }
 
 
-    if (_unwrappETH) {
+    if (_unwrappETH && _tokenB == wethToken) {
       IWETH(wethToken).withdraw(output);
-      payable(msg.sender).transfer(output);
+      // payable(msg.sender).transfer(output);
+      (bool success, ) = msg.sender.call{value: output}("");
+      if(!success) {
+        revert FailedCall();
+      }
     } else {
       IERC20(_tokenB).safeTransfer(msg.sender, output);
     }
@@ -257,7 +265,7 @@ contract OfficialSameChainSwap is Ownable, ReentrancyGuard {
         _minAmountOut,
         _path,
         address(this),
-        block.timestamp * 5 minutes
+        block.timestamp + 1 hours
     );
     uint256 finalAmount = IERC20(tokenOut).balanceOf(address(this));
     return finalAmount - initial;
@@ -277,7 +285,11 @@ contract OfficialSameChainSwap is Ownable, ReentrancyGuard {
   }
 
   function recoverStuckETH(address payable _beneficiary) public onlyOwner {
-    _beneficiary.transfer(address(this).balance);
+    // _beneficiary.transfer(address(this).balance);
+    (bool success, ) = _beneficiary.call{value: address(this).balance}("");
+    if(!success) {
+      revert FailedCall();
+    }
   }
 
   function recoverStuckTokens(address _token) external onlyOwner {
