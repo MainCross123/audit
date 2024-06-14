@@ -120,9 +120,10 @@ contract OfficialSameChainSwap is Ownable2Step, ReentrancyGuard {
   address public feeReceiver;
   uint256 public constant feeBps = 1000; // 1000 is 1% so we can have many decimals
 
-  IUniswapV2Router02 public v2Router;
-  IV3SwapRouter public v3Router;
-  address public wethToken;
+  IUniswapV2Router02 public immutable v2Router;
+  IV3SwapRouter public immutable v3Router;
+  address public immutable wethToken;
+
   error FailedCall(); // Used when transfer function is failed.
   //////////================= Events ====================================================
   event SwapExecuted(

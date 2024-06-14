@@ -66,9 +66,11 @@ contract SameChainSwapAvax is Ownable2Step {
   address public feeReceiver;
   uint256 public constant feeBps = 1000; // 1000 is 1% so we can have many decimals
 
-  ILBRouter public lbRouter;
-  IQuoter public lbQuoter;
-  address public wethToken;
+  ILBRouter public immutable lbRouter;
+  IQuoter public immutable lbQuoter;
+  address public immutable wethToken;
+  uint256 public constant MAX_PLATFORM_FEE = 2000; // 20% in basis points
+
   error FailedCall(); // Used when transfer function is failed.
   //////////================= Events ====================================================
   event SwapExecuted(
