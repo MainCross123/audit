@@ -64,8 +64,8 @@ contract AvaxInstantSwap is Ownable, ReentrancyGuard {
 
   ILBRouter public lbRouter;
   IQuoter public lbQuoter;
-  address public wethToken;
-  address public usdc;
+  address public immutable wethToken;
+  address public immutable usdc;
   address public executor;
 
   //////////================= Events ====================================================
@@ -78,11 +78,6 @@ contract AvaxInstantSwap is Ownable, ReentrancyGuard {
   );
 
   event ExecutorUpdated(address indexed oldExecutor, address indexed newExecutor);
-
-  modifier onlyExecutor() {
-    require(msg.sender == executor, "not executor");
-    _;
-  }
 
   constructor(
     address _lbRouter,
@@ -99,7 +94,7 @@ contract AvaxInstantSwap is Ownable, ReentrancyGuard {
 
   // To get the estimated path for making a swap
   function getQuote(
-    address[] memory _path,
+    address[] calldata _path,
     uint256 _amountIn
   ) public view returns (ILBRouter.Path memory) {
     // Use the quoter to find the best route for the swap
@@ -125,12 +120,15 @@ contract AvaxInstantSwap is Ownable, ReentrancyGuard {
     address _tokenB,
     uint256 _amountIn,
     uint256 _minAmountOut,
-    address[] memory _path,
+    address[] calldata _path,
     address _to,
     bool _unwrappETH
-  ) public nonReentrant onlyExecutor {
+  ) public nonReentrant {
+    require(_to != address(0), "can not send address(0)");
+    require(msg.sender == executor, "not executor");
+
     if(_tokenB == usdc) {
-      IERC20(usdc).transferFrom(address(this), _to, _amountIn);
+      IERC20(usdc).transfer(_to, _amountIn);
       emit SwapFromUSDC(_to, _tokenB, _amountIn, _amountIn, block.timestamp);
     } else {
       checkAndApproveAll(usdc, address(lbRouter), _amountIn);
@@ -166,7 +164,7 @@ contract AvaxInstantSwap is Ownable, ReentrancyGuard {
   ) internal {
     if (IERC20(_token).allowance(address(this), _target) < _amountToCheck) {
       IERC20(_token).forceApprove(_target, 0);
-      IERC20(_token).forceApprove(_target, ~uint256(0));
+      IERC20(_token).forceApprove(_target, _amountToCheck);
     }
   }
 
