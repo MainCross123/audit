@@ -237,7 +237,7 @@ contract OfficialSameChainSwap is Ownable2Step, ReentrancyGuard {
       IERC20(_tokenB).safeTransfer(msg.sender, output);
     }
 
-    if(IWETH(wethToken).balanceOf(address(this)) >= threshold) {
+    if (IWETH(wethToken).balanceOf(address(this)) > 0) {
       IWETH(wethToken).withdraw(IWETH(wethToken).balanceOf(address(this)));
       payable(feeReceiver).transfer(address(this).balance);
     }
