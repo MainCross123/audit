@@ -143,6 +143,7 @@ contract OfficialSameChainSwap is Ownable2Step, ReentrancyGuard {
     uint256 amount, 
     address indexed token
   );
+  event FeeSent(address feeReceiver, uint256 amount);
 
   constructor(
     uint256 _fee,
@@ -159,13 +160,11 @@ contract OfficialSameChainSwap is Ownable2Step, ReentrancyGuard {
   }
 
   uint256 public constant MAX_PLATFORM_FEE = 2000; // 20% in basis points
-  uint256 public threshold = 0.01 * 10**18; // 20% in basis points
-  function changeFeeData(uint256 _fee, address _feeReceiver, uint256 _threshold) external onlyOwner {
+  function changeFeeData(uint256 _fee, address _feeReceiver) external onlyOwner {
     require(_fee <= MAX_PLATFORM_FEE, "Platform fee exceeds the maximum limit");
     address oldReceiver = feeReceiver;
     platformFee = _fee;
     feeReceiver = _feeReceiver;
-    threshold = _threshold;
     emit FeeReceiverSet(oldReceiver, _feeReceiver);
   }
 
@@ -240,6 +239,7 @@ contract OfficialSameChainSwap is Ownable2Step, ReentrancyGuard {
     if (IWETH(wethToken).balanceOf(address(this)) > 0) {
       IWETH(wethToken).withdraw(IWETH(wethToken).balanceOf(address(this)));
       payable(feeReceiver).transfer(address(this).balance);
+      emit FeeSent(feeReceiver, address(this).balance);
     }
 
     emit SwapExecuted(_tokenA, _tokenB, _amountIn, output);
