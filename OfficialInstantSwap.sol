@@ -143,8 +143,9 @@ contract OfficialInstantSwap is Ownable, ReentrancyGuard {
     address _v2Router,
     address _executor,
     address _usdc,
-    address _weth
-  ) Ownable(msg.sender) {
+    address _weth,
+    address _owner
+  ) Ownable(_owner) {
     v3Router = IV3SwapRouter(_v3Router);
     v2Router = IUniswapV2Router02(_v2Router);
     executor= _executor;
