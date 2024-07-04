@@ -83,8 +83,9 @@ contract AvaxInstantSwap is Ownable, ReentrancyGuard {
     address _lbRouter,
     address _lbQuoter,
     address _usdc,
-    address _executor
-  ) Ownable(msg.sender) {
+    address _executor,
+    address _owner
+  ) Ownable(_owner) {
     lbRouter = ILBRouter(_lbRouter);
     lbQuoter = IQuoter(_lbQuoter);
     wethToken = address(lbRouter.getWNATIVE());
