@@ -61,7 +61,6 @@ interface IQuoter {
 contract SameChainSwapAvax is Ownable2Step {
   using SafeERC20 for IERC20;
 
-  mapping(address => bool) public feeTokens;
   uint256 public platformFee; // Fee must be by 1000, so if you want 5% this will be 5000
   address public feeReceiver;
   uint256 public constant feeBps = 1000; // 1000 is 1% so we can have many decimals
@@ -70,6 +69,7 @@ contract SameChainSwapAvax is Ownable2Step {
   IQuoter public immutable lbQuoter;
   address public immutable wethToken;
   uint256 public constant MAX_PLATFORM_FEE = 2000; // 20% in basis points
+  uint256 public threshold = 1 * 10**18;
 
   error FailedCall(); // Used when transfer function is failed.
   //////////================= Events ====================================================
@@ -88,6 +88,7 @@ contract SameChainSwapAvax is Ownable2Step {
     uint256 amount, 
     address indexed token
   );
+  event FeeSent(address feeReceiver, uint256 amount);
 
   constructor(
     uint256 _fee,
@@ -101,12 +102,13 @@ contract SameChainSwapAvax is Ownable2Step {
     lbQuoter = IQuoter(_lbQuoter);
     wethToken = address(lbRouter.getWNATIVE());
   }
-    uint256 public constant MAX_PLATFORM_FEE = 2000; // 20% in basis points
-  function changeFeeData(uint256 _fee, address _feeReceiver) external onlyOwner {
+    
+  function changeFeeData(uint256 _fee, address _feeReceiver, uint256 _threshold) external onlyOwner {
     require(_fee <= MAX_PLATFORM_FEE, "Platform fee exceeds the maximum limit");
     address oldReceiver = feeReceiver;
     platformFee = _fee;
     feeReceiver = _feeReceiver;
+    threshold = _threshold;
     emit FeeReceiverSet(oldReceiver, _feeReceiver);
 }
 
@@ -155,30 +157,57 @@ contract SameChainSwapAvax is Ownable2Step {
       _amountIn = afterTransfer - beforeTransfer;
     }
 
-    address feeToken = identifyFeeToken(_tokenA, _tokenB);
-
-    uint256 amountIn = (msg.value > 0 ? msg.value : _amountIn);
-
-    uint256 amountToSwap = amountIn;
-
-    if (feeToken == _tokenA || feeToken == address(0)) {
-      amountToSwap = deductFees(amountIn, _tokenA);
-    }
+    uint256 amountToSwap = (msg.value > 0 ? msg.value : _amountIn);
 
     checkAndApproveAll(_tokenA, address(lbRouter), amountToSwap);
+    uint256 output;
+    if(_tokenA == wethToken) {
+      amountToSwap = amountToSwap - amountToSwap * platformFee / (feeBps * 100);
+      ILBRouter.Path memory pathQuote = getQuote(_path, amountToSwap);
+      output = lbRouter
+        .swapExactTokensForTokensSupportingFeeOnTransferTokens(
+          amountToSwap,
+          _minAmountOut, // Amount out min
+          pathQuote,
+          address(this),
+          block.timestamp + 1 hours
+      );
+    } else if (_tokenA != wethToken && _tokenB != wethToken) {
+      address[] memory path = new address[](2);
+      path[0] = _path[0];
+      path[1] = wethToken;
+      
+      uint256 feeAmount = amountToSwap * platformFee / (feeBps * 100);
+      ILBRouter.Path memory pathQuoteForFee = getQuote(path, feeAmount);
+      lbRouter
+        .swapExactTokensForTokensSupportingFeeOnTransferTokens(
+          feeAmount,
+          0, // Amount out min
+          pathQuoteForFee,
+          address(this),
+          block.timestamp + 1 hours
+      );
 
-    ILBRouter.Path memory pathQuote = getQuote(_path, amountToSwap);
-    uint256 output = lbRouter
-      .swapExactTokensForTokensSupportingFeeOnTransferTokens(
-        amountToSwap,
-        _minAmountOut, // Amount out min
-        pathQuote,
-        address(this),
-        block.timestamp + 1 hours
-    );
-
-    if (feeToken == _tokenB) {
-      output = deductFees(output, _tokenB);
+      ILBRouter.Path memory pathQuote = getQuote(_path, amountToSwap-feeAmount);
+      output = lbRouter
+        .swapExactTokensForTokensSupportingFeeOnTransferTokens(
+          amountToSwap-feeAmount,
+          _minAmountOut, // Amount out min
+          pathQuote,
+          address(this),
+          block.timestamp + 1 hours
+      );
+    } else {
+      ILBRouter.Path memory pathQuote = getQuote(_path, amountToSwap);
+      output = lbRouter
+        .swapExactTokensForTokensSupportingFeeOnTransferTokens(
+          amountToSwap,
+          _minAmountOut, // Amount out min
+          pathQuote,
+          address(this),
+          block.timestamp + 1 hours
+      );
+      output = output - output * platformFee / (feeBps * 100);
     }
 
 
@@ -193,26 +222,14 @@ contract SameChainSwapAvax is Ownable2Step {
       IERC20(_tokenB).safeTransfer(msg.sender, output);
     }
 
+    if (IWNATIVE(wethToken).balanceOf(address(this)) > 0) {
+      IWNATIVE(wethToken).withdraw(IWNATIVE(wethToken).balanceOf(address(this)));
+      payable(feeReceiver).transfer(address(this).balance);
+      emit FeeSent(feeReceiver, address(this).balance);
+    }
+
     emit SwapExecuted(_tokenA, _tokenB, _amountIn, output);
   }
-
-   function deductFees(uint _amount, address _token) internal returns(uint amountToSwap) {
-      uint feeAmount = _amount * platformFee / (feeBps * 100);
-      amountToSwap = _amount - feeAmount;
-      IERC20(_token).safeTransfer(feeReceiver, feeAmount);
-      emit Fee(msg.sender, feeAmount, _token);
-    }
-  
-
-  function identifyFeeToken(address _tokenA, address _tokenB) internal view returns (address) {
-    if (feeTokens[_tokenA]) {
-      return _tokenA;
-    } else if (feeTokens[_tokenB]) {
-      return _tokenB;
-    }
-    return address(0);
-  }
-
 
   function checkAndApproveAll(
     address _token,
@@ -237,17 +254,6 @@ contract SameChainSwapAvax is Ownable2Step {
   function recoverStuckTokens(address _token) external onlyOwner {
     uint256 amount = IERC20(_token).balanceOf(address(this));
     IERC20(_token).safeTransfer(owner(), amount);
-  }
-
-
-  function addFeeToken(address _token) external onlyOwner {
-    require(_token != address(0), "Invalid token address");
-    feeTokens[_token] = true;
-  }
-
-  function removeFeeToken(address _token) external onlyOwner {
-    require(_token != address(0), "Invalid token address");
-    feeTokens[_token] = false;
   }
 
   receive() external payable {}

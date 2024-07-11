@@ -7,6 +7,7 @@ import "@uniswap/v3-core/contracts/interfaces/IUniswapV3Pool.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import "./libs/BytesLib.sol";
 
 interface IV3SwapRouter {
   struct ExactInputSingleParams {
@@ -114,6 +115,7 @@ interface IWETH is IERC20 {
 
 contract OfficialSameChainSwap is Ownable2Step, ReentrancyGuard {
   using SafeERC20 for IERC20;
+  using BytesLib for bytes;
 
   mapping(address => bool) public feeTokens;
   uint256 public platformFee; // Fee must be by 1000, so if you want 5% this will be 5000
@@ -141,6 +143,7 @@ contract OfficialSameChainSwap is Ownable2Step, ReentrancyGuard {
     uint256 amount, 
     address indexed token
   );
+  event FeeSent(address feeReceiver, uint256 amount);
 
   constructor(
     uint256 _fee,
@@ -188,34 +191,41 @@ contract OfficialSameChainSwap is Ownable2Step, ReentrancyGuard {
       uint256 afterTransfer = IERC20(_tokenA).balanceOf(address(this));
       _amountIn = afterTransfer - beforeTransfer;
     }
-    address feeToken = identifyFeeToken(_tokenA, _tokenB);
-
-    uint256 amountIn = (msg.value > 0 ? msg.value : _amountIn);
-
-    uint256 amountToSwap = amountIn;
-    if (feeToken == _tokenA || feeToken == address(0)) {
-      amountToSwap = deductFees(amountIn, _tokenA);
-    }
-
+    
+    uint256 amountIn = (msg.value > 0 ? msg.value : _amountIn);    
     uint256 output;
     if (_buyOneTwoOrThree == 1) {
-      output = v2Swap(_pathV2, amountToSwap, _minAmountOutV2);
+      uint256 feeAmount = amountIn * platformFee / (feeBps * 100);
+      if(_pathV2[0] != wethToken) { // WETH => Token
+        address[] memory path = new address[](2);
+        path[0] = _pathV2[0];
+        path[1] = wethToken;
+        v2Swap(path, feeAmount, 0);
+      }
+      output = v2Swap(_pathV2, amountIn-feeAmount, _minAmountOutV2);
     } else if (_buyOneTwoOrThree == 2) {
-      output = v3Swap(_tokenA, _pathV3, amountToSwap, _minAmountOutV3);
+      uint256 feeAmount = amountIn * platformFee / (feeBps * 100);
+      if(_pathV3.toAddress(0) == wethToken) { // WETH => output Token
+        output = v3Swap(_tokenA, _pathV3, amountIn-feeAmount, _minAmountOutV3);
+      } else if (_pathV3.toAddress(23) == wethToken && _tokenB == wethToken) { // Token => WETH 
+        output = v3Swap(_tokenA, _pathV3, amountIn, _minAmountOutV3);
+        feeAmount = output * platformFee / (feeBps * 100);
+        output = output - feeAmount;
+      } else  { // Token => WETH (stable coins) => Token
+        v3Swap(_tokenA, _pathV3.slice(0, 43), feeAmount, 0);
+        output = v3Swap(_tokenA, _pathV3, amountIn - feeAmount, _minAmountOutV3);
+      }
     } else if (_buyOneTwoOrThree == 3) {
-      output = v2Swap(_pathV2, amountToSwap, _minAmountOutV2);
-      output = v3Swap(_pathV2[_pathV2.length - 1], _pathV3, output, _minAmountOutV3);
+      output = v2Swap(_pathV2, amountIn, _minAmountOutV2);
+      uint256 feeAmount = output * platformFee / (feeBps * 100);
+      output = v3Swap(_pathV2[_pathV2.length - 1], _pathV3, output-feeAmount, _minAmountOutV3);
     } else if (_buyOneTwoOrThree == 4) {
-      output = v3Swap(_tokenA, _pathV3, amountToSwap, _minAmountOutV3);
-      output = v2Swap(_pathV2, output, _minAmountOutV2);
+      output = v3Swap(_tokenA, _pathV3, amountIn, _minAmountOutV3);
+      uint256 feeAmount = output * platformFee / (feeBps * 100);
+      output = v2Swap(_pathV2, output-feeAmount, _minAmountOutV2);
     }
 
-    if (feeToken == _tokenB) {
-      output = deductFees(output, _tokenB);
-    }
-
-
-    if (_unwrappETH && _tokenB == wethToken) {
+    if (_unwrappETH) {
       IWETH(wethToken).withdraw(output);
       // payable(msg.sender).transfer(output);
       (bool success, ) = msg.sender.call{value: output}("");
@@ -226,26 +236,15 @@ contract OfficialSameChainSwap is Ownable2Step, ReentrancyGuard {
       IERC20(_tokenB).safeTransfer(msg.sender, output);
     }
 
+    if (IWETH(wethToken).balanceOf(address(this)) > 0) {
+      IWETH(wethToken).withdraw(IWETH(wethToken).balanceOf(address(this)));
+      payable(feeReceiver).transfer(address(this).balance);
+      emit FeeSent(feeReceiver, address(this).balance);
+    }
+
     emit SwapExecuted(_tokenA, _tokenB, _amountIn, output);
   }
-
-  function deductFees(uint _amount, address _token) internal returns(uint amountToSwap) {
-    uint feeAmount = _amount * platformFee / (feeBps * 100);
-    amountToSwap = _amount - feeAmount;
-    IERC20(_token).safeTransfer(feeReceiver, feeAmount);
-    emit Fee(msg.sender, feeAmount, _token);
-  }
   
-
-  function identifyFeeToken(address _tokenA, address _tokenB) internal view returns (address) {
-    if (feeTokens[_tokenA]) {
-      return _tokenA;
-    } else if (feeTokens[_tokenB]) {
-      return _tokenB;
-    }
-    return address(0);
-  }
-
   function checkAndApproveAll(address _token, address _target, uint256 _amountToCheck) internal {
     if (IERC20(_token).allowance(address(this), _target) < _amountToCheck) {
         IERC20(_token).forceApprove(_target, 0);
@@ -297,17 +296,6 @@ contract OfficialSameChainSwap is Ownable2Step, ReentrancyGuard {
     uint256 amount = IERC20(_token).balanceOf(address(this));
     IERC20(_token).safeTransfer(owner(), amount);
   }
-
-  function addFeeToken(address _token) external onlyOwner {
-    require(_token != address(0), "Invalid token address");
-    feeTokens[_token] = true;
-  }
-
-  function removeFeeToken(address _token) external onlyOwner {
-    require(_token != address(0), "Invalid token address");
-    feeTokens[_token] = false;
-  }
-
 
   receive() external payable {}
 

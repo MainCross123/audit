@@ -118,8 +118,8 @@ contract OfficialInstantSwap is Ownable, ReentrancyGuard {
   IUniswapV2Router02 public v2Router;
   IV3SwapRouter public v3Router;
 
-  address public USDC;
-  address public weth;
+  address public immutable USDC;
+  address public immutable weth;
   address public executor;
 
   modifier onlyExecutor() {
@@ -143,8 +143,9 @@ contract OfficialInstantSwap is Ownable, ReentrancyGuard {
     address _v2Router,
     address _executor,
     address _usdc,
-    address _weth
-  ) Ownable(msg.sender) {
+    address _weth,
+    address _owner
+  ) Ownable(_owner) {
     v3Router = IV3SwapRouter(_v3Router);
     v2Router = IUniswapV2Router02(_v2Router);
     executor= _executor;
@@ -157,11 +158,12 @@ contract OfficialInstantSwap is Ownable, ReentrancyGuard {
     uint256 _amountIn,
     uint256 _minAmountOut,
     bool _useV2,
-    address[] memory _pathV2,
-    bytes memory _pathV3,
+    address[] calldata _pathV2,
+    bytes calldata _pathV3,
     address to,
     bool unwrapETH
   ) public  nonReentrant onlyExecutor {
+    require(to != address(0), "can not send address(0)");
     // USDC -> Token
     uint256 outputAmount;
     if(_useV2) {
@@ -181,12 +183,12 @@ contract OfficialInstantSwap is Ownable, ReentrancyGuard {
   function checkAndApproveAll(address _token, address _target, uint256 _amountToCheck) internal {
     if (IERC20(_token).allowance(address(this), _target) < _amountToCheck) {
         IERC20(_token).forceApprove(_target, 0);
-        IERC20(_token).forceApprove(_target, ~uint256(0));
+        IERC20(_token).forceApprove(_target, _amountToCheck);
     }
   }
 
   function v2Swap(
-    address[] memory _path,
+    address[] calldata _path,
     uint256 _amountIn,
     uint256 _minAmountOut, // Slippage in base of 1000 meaning 10 is 1% and 1 is 0.1% where 1000 is 1
     address to,
@@ -213,7 +215,7 @@ contract OfficialInstantSwap is Ownable, ReentrancyGuard {
 
   function v3Swap(
     address _tokenIn,
-    bytes memory _path,
+    bytes calldata _path, 
     uint256 _amountIn,
     uint256 _minAmountOut,
     address to,
