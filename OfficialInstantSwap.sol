@@ -2,8 +2,6 @@
 pragma solidity =0.8.20;
 
 import "@openzeppelin/contracts/access/Ownable.sol";
-import "@uniswap/v3-core/contracts/interfaces/IUniswapV3Factory.sol";
-import "@uniswap/v3-core/contracts/interfaces/IUniswapV3Pool.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
@@ -118,10 +116,10 @@ contract OfficialInstantSwap is Ownable, ReentrancyGuard {
   IUniswapV2Router02 public v2Router;
   IV3SwapRouter public v3Router;
 
-  address public immutable USDC;
-  address public immutable weth;
+  address public USDC;
+  address public weth;
   address public executor;
-
+  error FailedCall();
   modifier onlyExecutor() {
     require(msg.sender == executor, "not executor");
     _;
@@ -133,7 +131,6 @@ contract OfficialInstantSwap is Ownable, ReentrancyGuard {
     address indexed receiver,
     address indexed token,
     uint256 amountIn,
-    uint256 amountOut,
     uint256 time
   );
 
@@ -143,9 +140,8 @@ contract OfficialInstantSwap is Ownable, ReentrancyGuard {
     address _v2Router,
     address _executor,
     address _usdc,
-    address _weth,
-    address _owner
-  ) Ownable(_owner) {
+    address _weth
+  ) Ownable(msg.sender) {
     v3Router = IV3SwapRouter(_v3Router);
     v2Router = IUniswapV2Router02(_v2Router);
     executor= _executor;
@@ -157,80 +153,49 @@ contract OfficialInstantSwap is Ownable, ReentrancyGuard {
     address _outputToken,
     uint256 _amountIn,
     uint256 _minAmountOut,
+    uint256 _minAmountOutV2Swap,
     bool _useV2,
-    address[] calldata _pathV2,
-    bytes calldata _pathV3,
+    address[] memory _pathV2,
+    bytes memory _pathV3,
     address to,
     bool unwrapETH
   ) public  nonReentrant onlyExecutor {
-    require(to != address(0), "can not send address(0)");
     // USDC -> Token
-    uint256 outputAmount;
-    if(_useV2) {
-      outputAmount = v2Swap(_pathV2, _amountIn, _minAmountOut, to, unwrapETH);
-    } else {
-      outputAmount = v3Swap(USDC, _pathV3, _amountIn, _minAmountOut, to, unwrapETH);
+    if(_outputToken == USDC) {
+      IERC20(USDC).transfer(to, _amountIn);
+      emit SwapFromUSDC(to, USDC, _amountIn, block.timestamp);
+      return;
     }
-    emit SwapFromUSDC(to, _outputToken, _amountIn, outputAmount, block.timestamp);
-  }
 
-  function directSendUSDC(address to, uint256 amount) external onlyExecutor {
-    require(to != address(0), "can not send address(0)");
-    IERC20(USDC).transfer(to, amount);
-    emit SwapFromUSDC(to, USDC, amount,amount, block.timestamp);
-  }
-
-  function checkAndApproveAll(address _token, address _target, uint256 _amountToCheck) internal {
-    if (IERC20(_token).allowance(address(this), _target) < _amountToCheck) {
-        IERC20(_token).forceApprove(_target, 0);
-        IERC20(_token).forceApprove(_target, _amountToCheck);
-    }
-  }
-
-  function v2Swap(
-    address[] calldata _path,
-    uint256 _amountIn,
-    uint256 _minAmountOut, // Slippage in base of 1000 meaning 10 is 1% and 1 is 0.1% where 1000 is 1
-    address to,
-    bool unwrapETH
-  ) internal returns (uint256) {
-    address tokenOut = _path[_path.length - 1];
-    checkAndApproveAll(_path[0], address(v2Router), _amountIn);
-    uint256 initial = IERC20(tokenOut).balanceOf(to);
-    v2Router.swapExactTokensForTokensSupportingFeeOnTransferTokens(
-        _amountIn,
-        _minAmountOut,
-        _path,
-        unwrapETH ? address(this) : to,
-        block.timestamp + 10 minutes
-    );
-    uint256 finalAmount = IERC20(tokenOut).balanceOf(to);
-    if (unwrapETH) { // Get ETH at the end
-        uint256 wethBalance = IERC20(weth).balanceOf(address(this));
-        IWETH(weth).withdraw(wethBalance);
-        payable(to).transfer(address(this).balance);
-    }
-    return finalAmount - initial;
-  }
-
-  function v3Swap(
-    address _tokenIn,
-    bytes calldata _path, 
-    uint256 _amountIn,
-    uint256 _minAmountOut,
-    address to,
-    bool unwrapETH
-  ) internal returns (uint256 amountOutput) {
-    checkAndApproveAll(_tokenIn, address(v3Router), _amountIn);
+    // 1. Swap USDC to ETH (and/or final token) on v3
+    IERC20(USDC).approve(address(v3Router), _amountIn);
     IV3SwapRouter.ExactInputParams memory params = IV3SwapRouter.ExactInputParams(
-      _path, unwrapETH ? address(this) : to, _amountIn, _minAmountOut
+      _pathV3, _useV2 || unwrapETH? address(this) : to, _amountIn, _minAmountOut
     );
-    amountOutput = v3Router.exactInput( params );
-    if (unwrapETH) { // Get ETH at the end
-        uint256 wethBalance = IERC20(weth).balanceOf(address(this));
-        IWETH(weth).withdraw(wethBalance);
-        payable(to).transfer(address(this).balance);
+
+    uint256 wethOrFinalTokenOut = v3Router.exactInput(params);
+
+    if(_useV2) {
+      IERC20(weth).approve(address(v2Router), wethOrFinalTokenOut);
+      v2Router.swapExactTokensForTokensSupportingFeeOnTransferTokens(
+        wethOrFinalTokenOut,
+        _minAmountOutV2Swap,
+        _pathV2,
+        unwrapETH? address(this) : to,
+        block.timestamp + 1 hours
+      );
     }
+
+    if(unwrapETH) {
+      uint256 wethBalance = IERC20(weth).balanceOf(address(this));
+      IWETH(weth).withdraw(wethBalance);
+      // payable(receiverData.userReceiver).transfer(address(this).balance);
+      (bool success, ) = to.call{value: address(this).balance}("");
+      if(!success) {
+          revert FailedCall();
+      }
+    }
+    emit SwapFromUSDC(to, _outputToken, _amountIn, block.timestamp);
   }
 
   function setExecutor(address _newExecutor) external onlyOwner {
@@ -238,13 +203,9 @@ contract OfficialInstantSwap is Ownable, ReentrancyGuard {
     executor = _newExecutor;
   }
 
-  function recoverStuckETH(address payable _beneficiary) public onlyOwner {
-    _beneficiary.transfer(address(this).balance);
-  }
-
   function recoverStuckTokens(address _token) external onlyOwner {
     uint256 amount = IERC20(_token).balanceOf(address(this));
-    IERC20(_token).safeTransfer(owner(), amount);
+    IERC20(_token).transfer(owner(), amount);
   }
 
 
