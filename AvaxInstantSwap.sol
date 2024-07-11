@@ -60,10 +60,10 @@ interface IQuoter {
 contract AvaxInstantSwap is Ownable, ReentrancyGuard {
   using SafeERC20 for IERC20;
 
-  ILBRouter public lbRouter;
-  IQuoter public lbQuoter;
-  address public wethToken;
-  address public usdc;
+  ILBRouter public immutable lbRouter;
+  IQuoter public immutable lbQuoter;
+  address public immutable wethToken;
+  address public immutable usdc;
   address public executor;
 
   //////////================= Events ====================================================
@@ -172,9 +172,8 @@ contract AvaxInstantSwap is Ownable, ReentrancyGuard {
     }
   }
 
-
-  function recoverStuckETH(address payable _beneficiary) public onlyOwner {
-    _beneficiary.transfer(address(this).balance);
+  function recoverStuckETH() public onlyOwner {
+    payable(owner()).transfer(address(this).balance);
   }
 
   function recoverStuckTokens(address _token) external onlyOwner {
