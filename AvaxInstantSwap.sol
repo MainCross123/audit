@@ -2,8 +2,6 @@
 pragma solidity =0.8.20;
 
 import "@openzeppelin/contracts/access/Ownable.sol";
-import "@uniswap/v3-core/contracts/interfaces/IUniswapV3Factory.sol";
-import "@uniswap/v3-core/contracts/interfaces/IUniswapV3Pool.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
@@ -64,8 +62,8 @@ contract AvaxInstantSwap is Ownable, ReentrancyGuard {
 
   ILBRouter public lbRouter;
   IQuoter public lbQuoter;
-  address public immutable wethToken;
-  address public immutable usdc;
+  address public wethToken;
+  address public usdc;
   address public executor;
 
   //////////================= Events ====================================================
@@ -73,11 +71,15 @@ contract AvaxInstantSwap is Ownable, ReentrancyGuard {
     address indexed receiver,
     address indexed token,
     uint256 amountIn,
-    uint256 amountOut,
     uint256 time
   );
 
   event ExecutorUpdated(address indexed oldExecutor, address indexed newExecutor);
+
+  modifier onlyExecutor() {
+    require(msg.sender == executor, "not executor");
+    _;
+  }
 
   constructor(
     address _lbRouter,
@@ -95,7 +97,7 @@ contract AvaxInstantSwap is Ownable, ReentrancyGuard {
 
   // To get the estimated path for making a swap
   function getQuote(
-    address[] calldata _path,
+    address[] memory _path,
     uint256 _amountIn
   ) public view returns (ILBRouter.Path memory) {
     // Use the quoter to find the best route for the swap
@@ -121,36 +123,38 @@ contract AvaxInstantSwap is Ownable, ReentrancyGuard {
     address _tokenB,
     uint256 _amountIn,
     uint256 _minAmountOut,
-    address[] calldata _path,
+    address[] memory _path,
     address _to,
     bool _unwrappETH
-  ) public nonReentrant {
-    require(_to != address(0), "can not send address(0)");
-    require(msg.sender == executor, "not executor");
-
-    if(_tokenB == usdc) {
+  ) public nonReentrant onlyExecutor {
+    if (_tokenB == usdc) {
+      emit SwapFromUSDC(_to, _tokenB, _amountIn, block.timestamp);
       IERC20(usdc).transfer(_to, _amountIn);
-      emit SwapFromUSDC(_to, _tokenB, _amountIn, _amountIn, block.timestamp);
-    } else {
-      checkAndApproveAll(usdc, address(lbRouter), _amountIn);
-
-      ILBRouter.Path memory pathQuote = getQuote(_path, _amountIn);
-      uint256 output = lbRouter
-        .swapExactTokensForTokensSupportingFeeOnTransferTokens(
-          _amountIn,
-          _minAmountOut, // Amount out min
-          pathQuote,
-          _unwrappETH ? address(this) : _to,
-          block.timestamp + 10 minutes
-      );
-
-      if (_unwrappETH) {
-        IWNATIVE(wethToken).withdraw(output);
-        payable(_to).transfer(output);
-      }
-
-      emit SwapFromUSDC(_to, _tokenB, _amountIn, output, block.timestamp);
+      return;
     }
+    if (IERC20(usdc).allowance(address(this), address(lbRouter)) < _amountIn) {
+        IERC20(usdc).approve(address(lbRouter), _amountIn);
+    }
+    ILBRouter.Path memory pathQuote = getQuote(_path, _amountIn);
+    // Make LBRouter swap
+    if (_unwrappETH) {
+        lbRouter.swapExactTokensForNATIVESupportingFeeOnTransferTokens(
+            _amountIn,
+            _minAmountOut, // Amount out min
+            pathQuote,
+            payable(_to),
+            block.timestamp + 1 hours
+        );     
+    } else {
+        lbRouter.swapExactTokensForTokensSupportingFeeOnTransferTokens(
+            _amountIn,
+            _minAmountOut, // Amount out min
+            pathQuote,
+            _to,
+            block.timestamp + 1 hours
+        );
+    }
+    emit SwapFromUSDC(_to, _tokenB, _amountIn, block.timestamp);
   }
 
   function setExecutor(address _newExecutor) external onlyOwner {
@@ -165,7 +169,7 @@ contract AvaxInstantSwap is Ownable, ReentrancyGuard {
   ) internal {
     if (IERC20(_token).allowance(address(this), _target) < _amountToCheck) {
       IERC20(_token).forceApprove(_target, 0);
-      IERC20(_token).forceApprove(_target, _amountToCheck);
+      IERC20(_token).forceApprove(_target, ~uint256(0));
     }
   }
 
@@ -176,7 +180,7 @@ contract AvaxInstantSwap is Ownable, ReentrancyGuard {
 
   function recoverStuckTokens(address _token) external onlyOwner {
     uint256 amount = IERC20(_token).balanceOf(address(this));
-    IERC20(_token).safeTransfer(owner(), amount);
+    IERC20(_token).transfer(owner(), amount);
   }
 
   receive() external payable {}
