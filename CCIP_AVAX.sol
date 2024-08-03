@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.20;
+pragma solidity =0.8.19;
 
 import "@openzeppelin/contracts/access/Ownable2Step.sol";
 import {IRouterClient} from "@chainlink/contracts-ccip/src/v0.8/ccip/interfaces/IRouterClient.sol";
@@ -188,6 +188,10 @@ contract CCIP_AVAX is CCIPReceiver, Ownable2Step {
         address _feeReceiver,
         address _owner
     ) CCIPReceiver(_router) Ownable(_owner) {
+        require(_feeReceiver != address(0));
+        require(_lbRouter != address(0));
+        require(_lbQuoter != address(0));
+
         s_linkToken = IERC20(_link);
         lbRouter = ILBRouter(_lbRouter);
         lbQuoter = IQuoter(_lbQuoter);
@@ -209,6 +213,7 @@ contract CCIP_AVAX is CCIPReceiver, Ownable2Step {
     /// @param _sourceChainSelector The selector of the destination chain.
     /// @param _sender The address of the sender.
     modifier onlyAllowlisted(uint64 _sourceChainSelector, address _sender) {
+        require(_sender != address(0));
         if (!allowlistedSourceChains[_sourceChainSelector])
             revert SourceChainNotAllowed(_sourceChainSelector);
         if (!allowlistedSenders[_sender]) revert SenderNotAllowed(_sender);
@@ -241,22 +246,25 @@ contract CCIP_AVAX is CCIPReceiver, Ownable2Step {
         if (newOwner == address(0)) {
             revert OwnableInvalidOwner(address(0));
         }
-        _transferOwnership(newOwner);
+        super.transferOwnership(newOwner);
     }
 
     function changeFeeAndAddress(uint256 _fee, address _feeReceiver) external onlyOwner {
         require(timeLockTime > 0 && block.timestamp > timeLockTime, "Timelocked");
-        timeLockTime = 0; // Reset it
+        require(_feeReceiver != address(0));
+        require(_fee <= maxFee, "Max fee exceeded");
 
-        require(_fee < maxFee, "Max fee exceeded");
+        timeLockTime = 0; // Reset it
         swapFee = _fee;
         feeReceiver = _feeReceiver;
     }
 
     function changeRouters(address _lbRouter, address _lbQuoter) external onlyOwner {
         require(timeLockTime > 0 && block.timestamp > timeLockTime, "Timelocked");
-        timeLockTime = 0; // Reset it
+        require(_lbRouter != address(0));
+        require(_lbQuoter != address(0));
 
+        timeLockTime = 0; // Reset it
         lbRouter = ILBRouter(_lbRouter);
         lbQuoter = IQuoter(_lbQuoter);
     }
@@ -288,6 +296,7 @@ contract CCIP_AVAX is CCIPReceiver, Ownable2Step {
     /// @param _sender The address of the sender to be updated.
     /// @param allowed The allowlist status to be set for the sender.
     function allowlistSender(address _sender, bool allowed) external onlyOwner {
+        require(_sender != address(0));
         allowlistedSenders[_sender] = allowed;
     }
 
@@ -548,6 +557,7 @@ contract CCIP_AVAX is CCIPReceiver, Ownable2Step {
             IWNATIVE(wAVAX).deposit{value: msg.value - _initialSwapData.amountIn}(); // _initialSwapData.amountIn will be the ccip fee
             realAmountIn = msg.value - _initialSwapData.amountIn;
         } else {
+            require(msg.value == 0, "Must not send value");
             uint256 initialBalance = IERC20(_initialSwapData.tokenIn).balanceOf(address(this));
             IERC20(_initialSwapData.tokenIn).safeTransferFrom(msg.sender, address(this), _initialSwapData.amountIn);
             uint256 currentBalance = IERC20(_initialSwapData.tokenIn).balanceOf(address(this));
@@ -858,6 +868,7 @@ contract CCIP_AVAX is CCIPReceiver, Ownable2Step {
     /// It should only be callable by the owner of the contract.
     /// @param _beneficiary The address to which the Ether should be sent.
     function withdraw(address _beneficiary) public onlyOwner {
+        require(_beneficiary != address(0) && _beneficiary != address(this), "Must be a valid address");
         require(timeLockTime > 0 && block.timestamp > timeLockTime, "Timelocked");
         timeLockTime = 0; // Reset it
 
@@ -882,6 +893,7 @@ contract CCIP_AVAX is CCIPReceiver, Ownable2Step {
         address _beneficiary,
         address _token
     ) public onlyOwner {
+        require(_beneficiary != address(0) && _beneficiary != address(this), "Must be a valid address");
         require(timeLockTime > 0 && block.timestamp > timeLockTime, "Timelocked");
         timeLockTime = 0; // Reset the timelock time to ensure the mechanism is valid for future withdrawals
 

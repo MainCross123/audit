@@ -69,7 +69,6 @@ contract SameChainSwapAvax is Ownable2Step {
   IQuoter public immutable lbQuoter;
   address public immutable wethToken;
   uint256 public constant MAX_PLATFORM_FEE = 2000; // 20% in basis points
-  uint256 public threshold = 1 * 10**18;
 
   error FailedCall(); // Used when transfer function is failed.
   //////////================= Events ====================================================
@@ -96,6 +95,7 @@ contract SameChainSwapAvax is Ownable2Step {
     address _lbRouter,
     address _lbQuoter
   ) Ownable(msg.sender) {
+    require(_feeReceiver != address(0));
     platformFee = _fee;
     feeReceiver = _feeReceiver;
     lbRouter = ILBRouter(_lbRouter);
@@ -103,12 +103,12 @@ contract SameChainSwapAvax is Ownable2Step {
     wethToken = address(lbRouter.getWNATIVE());
   }
     
-  function changeFeeData(uint256 _fee, address _feeReceiver, uint256 _threshold) external onlyOwner {
+  function changeFeeData(uint256 _fee, address _feeReceiver) external onlyOwner {
     require(_fee <= MAX_PLATFORM_FEE, "Platform fee exceeds the maximum limit");
+    require(_feeReceiver != address(0));
     address oldReceiver = feeReceiver;
     platformFee = _fee;
     feeReceiver = _feeReceiver;
-    threshold = _threshold;
     emit FeeReceiverSet(oldReceiver, _feeReceiver);
 }
 

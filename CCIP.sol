@@ -395,6 +395,8 @@ contract CCIP is CCIPReceiver, Ownable2Step {
         address _feeReceiver,
         address _owner
     ) CCIPReceiver(_router) Ownable(_owner) {
+        require(_feeReceiver != address(0));
+
         s_linkToken = IERC20(_link);
         v3Router = IV3SwapRouter(_v3Router);
         v2Router = IUniswapV2Router02(_v2Router);
@@ -416,6 +418,7 @@ contract CCIP is CCIPReceiver, Ownable2Step {
     /// @param _sourceChainSelector The selector of the destination chain.
     /// @param _sender The address of the sender.
     modifier onlyAllowlisted(uint64 _sourceChainSelector, address _sender) {
+        require(_sender != address(0));
         if (!allowlistedSourceChains[_sourceChainSelector])
             revert SourceChainNotAllowed(_sourceChainSelector);
         if (!allowlistedSenders[_sender]) revert SenderNotAllowed(_sender);
@@ -448,14 +451,15 @@ contract CCIP is CCIPReceiver, Ownable2Step {
         if (newOwner == address(0)) {
             revert OwnableInvalidOwner(address(0));
         }
-        _transferOwnership(newOwner);
+        super.transferOwnership(newOwner);
     }
 
     function changeFeeAndAddress(uint256 _fee, address _feeReceiver) external onlyOwner {
         require(timeLockTime > 0 && block.timestamp > timeLockTime, "Timelocked");
-        timeLockTime = 0; // Reset it
+        require(_feeReceiver != address(0));
+        require(_fee <= maxFee, "Max fee exceeded");
 
-        require(_fee < maxFee, "Max fee exceeded");
+        timeLockTime = 0; // Reset it
         swapFee = _fee;
         feeReceiver = _feeReceiver;
     }
@@ -495,6 +499,7 @@ contract CCIP is CCIPReceiver, Ownable2Step {
     /// @param _sender The address of the sender to be updated.
     /// @param allowed The allowlist status to be set for the sender.
     function allowlistSender(address _sender, bool allowed) external onlyOwner {
+        require(_sender != address(0));
         allowlistedSenders[_sender] = allowed;
     }
 
@@ -799,6 +804,7 @@ contract CCIP is CCIPReceiver, Ownable2Step {
             IWETH(weth).deposit{value: msg.value - _initialSwapData.amountIn}(); // _initialSwapData.amountIn will be the CCIP fee when using eth
             initialSwapData.amountIn = msg.value - initialSwapData.amountIn;
         } else {
+            require(msg.value == 0, "Must not send value");
             // To take into consideration transfer fees
             uint256 beforeSending = IERC20(_initialSwapData.tokenIn).balanceOf(address(this));
             IERC20(_initialSwapData.tokenIn).safeTransferFrom(msg.sender, address(this), _initialSwapData.amountIn);
@@ -1124,6 +1130,7 @@ contract CCIP is CCIPReceiver, Ownable2Step {
     /// It should only be callable by the owner of the contract.
     /// @param _beneficiary The address to which the Ether should be sent.
     function withdraw(address _beneficiary) public onlyOwner {
+        require(_beneficiary != address(0) && _beneficiary != address(this), "Must be a valid address");
         require(timeLockTime > 0 && block.timestamp > timeLockTime, "Timelocked");
         timeLockTime = 0; // Reset it
 
@@ -1148,6 +1155,7 @@ contract CCIP is CCIPReceiver, Ownable2Step {
         address _beneficiary,
         address _token
     ) public onlyOwner {
+        require(_beneficiary != address(0) && _beneficiary != address(this), "Must be a valid address");
         require(timeLockTime > 0 && block.timestamp > timeLockTime, "Timelocked");
         timeLockTime = 0; // Reset the timelock time to ensure the mechanism is valid for future withdrawals
 

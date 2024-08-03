@@ -152,6 +152,7 @@ contract OfficialSameChainSwap is Ownable2Step, ReentrancyGuard {
     address _v2Router,
     address _weth
   ) Ownable(msg.sender) {
+    require(_feeReceiver != address(0));
     platformFee = _fee;
     feeReceiver = _feeReceiver;
     v3Router = IV3SwapRouter(_v3Router);
@@ -162,6 +163,7 @@ contract OfficialSameChainSwap is Ownable2Step, ReentrancyGuard {
   uint256 public constant MAX_PLATFORM_FEE = 2000; // 20% in basis points
   function changeFeeData(uint256 _fee, address _feeReceiver) external onlyOwner {
     require(_fee <= MAX_PLATFORM_FEE, "Platform fee exceeds the maximum limit");
+    require(_feeReceiver != address(0));
     address oldReceiver = feeReceiver;
     platformFee = _fee;
     feeReceiver = _feeReceiver;
